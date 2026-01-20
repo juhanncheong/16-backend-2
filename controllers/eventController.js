@@ -1,7 +1,7 @@
-import Event from "../models/Event.js";
+const Event = require("../models/Event");
 
 // ✅ Admin: Create new event
-export const createEvent = async (req, res) => {
+exports.createEvent = async (req, res) => {
   try {
     const { name, description, imageUrl } = req.body;
 
@@ -12,11 +12,7 @@ export const createEvent = async (req, res) => {
       });
     }
 
-    const newEvent = await Event.create({
-      name,
-      description,
-      imageUrl,
-    });
+    const newEvent = await Event.create({ name, description, imageUrl });
 
     return res.status(201).json({
       success: true,
@@ -33,9 +29,9 @@ export const createEvent = async (req, res) => {
 };
 
 // ✅ Users: Get all events
-export const getEvents = async (req, res) => {
+exports.getEvents = async (req, res) => {
   try {
-    const events = await Event.find().sort({ createdAt: -1 }); // newest first
+    const events = await Event.find().sort({ createdAt: -1 });
 
     return res.status(200).json({
       success: true,
