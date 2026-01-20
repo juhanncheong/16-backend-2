@@ -6,9 +6,12 @@ const {
   createWithdrawal,
   getMyWithdrawals,
   setWithdrawalPin,
+  changeWithdrawalPin,
 } = require("../controllers/withdrawalsController");
 
 router.post("/set-pin", protect, setWithdrawalPin);
+router.post("/change-pin", protect, changeWithdrawalPin);
+
 router.post("/", protect, createWithdrawal);
 router.get("/me", protect, getMyWithdrawals);
 

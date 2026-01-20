@@ -10,11 +10,11 @@ function sanitizePin(pin) {
 }
 
 function isValidPinFormat(pin) {
-  // ✅ 4 to 6 digits (you can change this)
+  // ✅ 4 to 12 digits (you can change this anytime)
   return /^\d{4,12}$/.test(pin);
 }
 
-// ✅ User sets withdrawal PIN
+// ✅ User sets withdrawal PIN (ONLY if not set yet)
 exports.setWithdrawalPin = async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -23,18 +23,32 @@ exports.setWithdrawalPin = async (req, res) => {
     if (!isValidPinFormat(pin)) {
       return res.status(400).json({
         ok: false,
-        message: "PIN must be 4 to 6 digits",
+        message: "PIN must be 4 to 12 digits",
+      });
+    }
+
+    // ✅ prevent overwriting if already set
+    const user = await User.findById(userId).select("+withdrawPinHash");
+    if (!user) {
+      return res.status(404).json({ ok: false, message: "User not found" });
+    }
+
+    if (user.withdrawPinHash) {
+      return res.status(409).json({
+        ok: false,
+        code: "PIN_ALREADY_SET",
+        message: "Withdrawal PIN already set. Use Change PIN instead.",
       });
     }
 
     const hash = await bcrypt.hash(pin, 10);
 
-    await User.findByIdAndUpdate(userId, {
-      withdrawPinHash: hash,
-      withdrawPinFailedAttempts: 0,
-      withdrawPinLocked: false,
-      withdrawPinLockedAt: null,
-    });
+    user.withdrawPinHash = hash;
+    user.withdrawPinFailedAttempts = 0;
+    user.withdrawPinLocked = false;
+    user.withdrawPinLockedAt = null;
+
+    await user.save();
 
     return res.json({
       ok: true,
@@ -42,6 +56,84 @@ exports.setWithdrawalPin = async (req, res) => {
     });
   } catch (err) {
     console.error("setWithdrawalPin error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Server error",
+    });
+  }
+};
+
+// ✅ User changes withdrawal PIN (requires old PIN)
+exports.changeWithdrawalPin = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const oldPin = sanitizePin(req.body?.oldPin);
+    const newPin = sanitizePin(req.body?.newPin);
+
+    if (!oldPin || !newPin) {
+      return res.status(400).json({
+        ok: false,
+        message: "oldPin and newPin are required",
+      });
+    }
+
+    if (!isValidPinFormat(oldPin) || !isValidPinFormat(newPin)) {
+      return res.status(400).json({
+        ok: false,
+        message: "PIN must be 4 to 12 digits",
+      });
+    }
+
+    const user = await User.findById(userId).select(
+      "+withdrawPinHash withdrawPinLocked withdrawPinFailedAttempts withdrawPinLockedAt"
+    );
+
+    if (!user) {
+      return res.status(404).json({ ok: false, message: "User not found" });
+    }
+
+    if (!user.withdrawPinHash) {
+      return res.status(403).json({
+        ok: false,
+        code: "WITHDRAW_PIN_NOT_SET",
+        message: "Withdrawal PIN not set",
+      });
+    }
+
+    // ✅ if locked, block changing pin (support/admin must reset)
+    if (user.withdrawPinLocked) {
+      return res.status(403).json({
+        ok: false,
+        code: "WITHDRAW_PIN_LOCKED",
+        message: "Withdrawals locked. Please contact support.",
+      });
+    }
+
+    const isMatch = await bcrypt.compare(oldPin, user.withdrawPinHash);
+    if (!isMatch) {
+      return res.status(401).json({
+        ok: false,
+        code: "OLD_PIN_INCORRECT",
+        message: "Old withdrawal PIN is incorrect",
+      });
+    }
+
+    const hash = await bcrypt.hash(newPin, 10);
+
+    user.withdrawPinHash = hash;
+    user.withdrawPinFailedAttempts = 0;
+    user.withdrawPinLocked = false;
+    user.withdrawPinLockedAt = null;
+
+    await user.save();
+
+    return res.json({
+      ok: true,
+      message: "✅ Withdrawal PIN updated successfully",
+    });
+  } catch (err) {
+    console.error("changeWithdrawalPin error:", err);
     return res.status(500).json({
       ok: false,
       message: "Server error",
@@ -63,14 +155,12 @@ exports.createWithdrawal = async (req, res) => {
     amount = Number(amount);
     const pin = sanitizePin(withdrawPin);
 
-    // ✅ load user inside transaction (must include withdrawPinHash because select:false)
     const user = await User.findById(userId)
       .select("+withdrawPinHash withdrawPinFailedAttempts withdrawPinLocked withdrawPinLockedAt balance")
       .session(session);
 
     if (!user) throw new Error("User not found");
 
-    // ✅ 1) If PIN not set -> tell frontend to redirect to set-pin page
     if (!user.withdrawPinHash) {
       await session.abortTransaction();
       session.endSession();
@@ -81,7 +171,6 @@ exports.createWithdrawal = async (req, res) => {
       });
     }
 
-    // ✅ 2) If locked -> block immediately
     if (user.withdrawPinLocked) {
       await session.abortTransaction();
       session.endSession();
@@ -92,50 +181,48 @@ exports.createWithdrawal = async (req, res) => {
       });
     }
 
-// ✅ 3) Treat invalid format as WRONG attempt too
-let isMatch = false;
+    // ✅ Treat invalid format as WRONG attempt too
+    let isMatch = false;
 
-if (isValidPinFormat(pin)) {
-  isMatch = await bcrypt.compare(pin, user.withdrawPinHash);
-} else {
-  // invalid format counts as wrong pin
-  isMatch = false;
-}
+    if (isValidPinFormat(pin)) {
+      isMatch = await bcrypt.compare(pin, user.withdrawPinHash);
+    } else {
+      isMatch = false;
+    }
 
-if (!isMatch) {
-  const failed = Number(user.withdrawPinFailedAttempts || 0) + 1;
-  user.withdrawPinFailedAttempts = failed;
+    if (!isMatch) {
+      const failed = Number(user.withdrawPinFailedAttempts || 0) + 1;
+      user.withdrawPinFailedAttempts = failed;
 
-  let lockedNow = false;
+      let lockedNow = false;
 
-  if (failed >= MAX_PIN_ATTEMPTS) {
-    user.withdrawPinLocked = true;
-    user.withdrawPinLockedAt = new Date();
-    lockedNow = true;
-  }
+      if (failed >= MAX_PIN_ATTEMPTS) {
+        user.withdrawPinLocked = true;
+        user.withdrawPinLockedAt = new Date();
+        lockedNow = true;
+      }
 
-  await user.save({ session });
+      await user.save({ session });
 
-  // ✅ IMPORTANT: commit so attempts persist
-  await session.commitTransaction();
-  session.endSession();
+      // ✅ IMPORTANT: commit so attempts persist
+      await session.commitTransaction();
+      session.endSession();
 
-  return res.status(403).json({
-    ok: false,
-    code: lockedNow ? "WITHDRAW_PIN_LOCKED" : "WITHDRAW_PIN_INCORRECT",
-    message: lockedNow
-      ? "3 incorrect PIN attempts. Please contact support."
-      : "Incorrect withdrawal PIN",
-    attemptsLeft: Math.max(0, MAX_PIN_ATTEMPTS - failed),
-  });
-}
+      return res.status(403).json({
+        ok: false,
+        code: lockedNow ? "WITHDRAW_PIN_LOCKED" : "WITHDRAW_PIN_INCORRECT",
+        message: lockedNow
+          ? "3 incorrect PIN attempts. Please contact support."
+          : "Incorrect withdrawal PIN",
+        attemptsLeft: Math.max(0, MAX_PIN_ATTEMPTS - failed),
+      });
+    }
 
-// ✅ PIN correct -> reset attempts
-user.withdrawPinFailedAttempts = 0;
-user.withdrawPinLocked = false;
-user.withdrawPinLockedAt = null;
+    // ✅ PIN correct -> reset attempts
+    user.withdrawPinFailedAttempts = 0;
+    user.withdrawPinLocked = false;
+    user.withdrawPinLockedAt = null;
 
-    // ✅ continue original validation
     if (!amount || isNaN(amount)) {
       throw new Error("Invalid amount");
     }
@@ -159,7 +246,6 @@ user.withdrawPinLockedAt = null;
       throw new Error("Insufficient balance");
     }
 
-    // ✅ deduct immediately
     user.balance = balanceBefore - amount;
     await user.save({ session });
 

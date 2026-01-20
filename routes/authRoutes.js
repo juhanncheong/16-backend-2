@@ -4,6 +4,8 @@ const User = require("../models/User");
 const InvitationCode = require("../models/InvitationCode");
 
 const router = express.Router();
+const jwt = require("jsonwebtoken");
+const { protect } = require("../middleware/auth");
 
 // ✅ INVITE ONLY SIGNUP
 router.post("/signup", async (req, res) => {
@@ -20,16 +22,13 @@ router.post("/signup", async (req, res) => {
       return res.status(400).json({ message: "Password must be at least 6 characters" });
     }
 
-    // Normalize phone (remove spaces)
     const cleanPhone = phoneNumber.trim();
 
-    // Check if user exists
     const existingUser = await User.findOne({ phoneNumber: cleanPhone });
     if (existingUser) {
       return res.status(409).json({ message: "Phone number already registered" });
     }
 
-    // Validate invitation code
     const invite = await InvitationCode.findOne({
       code: invitationCode.trim().toUpperCase(),
     });
@@ -42,10 +41,8 @@ router.post("/signup", async (req, res) => {
       return res.status(400).json({ message: "Invitation code already used" });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create user
     const ip =
       req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
       req.socket?.remoteAddress ||
@@ -57,7 +54,6 @@ router.post("/signup", async (req, res) => {
       registeredIp: ip,
     });
 
-    // Mark invite as used
     invite.isUsed = true;
     invite.usedBy = user._id;
     invite.usedAt = new Date();
@@ -76,8 +72,6 @@ router.post("/signup", async (req, res) => {
   }
 });
 
-const jwt = require("jsonwebtoken");
-
 // ✅ LOGIN
 router.post("/login", async (req, res) => {
   try {
@@ -89,27 +83,23 @@ router.post("/login", async (req, res) => {
 
     const cleanPhone = phoneNumber.trim();
 
-    // Find user
     const user = await User.findOne({ phoneNumber: cleanPhone });
     if (!user) {
       return res.status(401).json({ message: "Invalid phone number or password" });
     }
 
-    // User banned
     if (user.isBanned) {
       return res.status(403).json({ message: "Your account has been banned. Contact support." });
     }
-    // Compare password
+
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid phone number or password" });
     }
 
-    // ✅ Update last online time
     user.lastOnlineAt = new Date();
     await user.save();
 
-    // Create token
     const token = jwt.sign(
       { userId: user._id, role: user.role },
       process.env.JWT_SECRET,
@@ -131,13 +121,54 @@ router.post("/login", async (req, res) => {
   }
 });
 
-const { protect } = require("../middleware/auth");
-
+// ✅ ME
 router.get("/me", protect, async (req, res) => {
   const user = await User.findById(req.user.userId).select("-password");
   if (!user) return res.status(404).json({ message: "User not found" });
 
   res.json({ user });
+});
+
+// ✅ CHANGE PASSWORD (requires old password)
+router.post("/change-password", protect, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { oldPassword, newPassword } = req.body || {};
+
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({
+        message: "oldPassword and newPassword are required",
+      });
+    }
+
+    if (String(newPassword).length < 6) {
+      return res.status(400).json({
+        message: "New password must be at least 6 characters",
+      });
+    }
+
+    const user = await User.findById(userId).select("+password");
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const isMatch = await bcrypt.compare(String(oldPassword), user.password);
+    if (!isMatch) {
+      return res.status(401).json({ message: "Old password is incorrect" });
+    }
+
+    const hashed = await bcrypt.hash(String(newPassword), 10);
+    user.password = hashed;
+    await user.save();
+
+    return res.json({
+      ok: true,
+      message: "✅ Password updated successfully",
+    });
+  } catch (err) {
+    console.error("change-password error:", err);
+    return res.status(500).json({
+      message: "Server error",
+    });
+  }
 });
 
 module.exports = router;
