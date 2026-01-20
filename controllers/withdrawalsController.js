@@ -11,7 +11,7 @@ function sanitizePin(pin) {
 
 function isValidPinFormat(pin) {
   // ✅ 4 to 6 digits (you can change this)
-  return /^\d{4,6}$/.test(pin);
+  return /^\d{4,12}$/.test(pin);
 }
 
 // ✅ User sets withdrawal PIN
@@ -92,50 +92,48 @@ exports.createWithdrawal = async (req, res) => {
       });
     }
 
-    // ✅ validate PIN provided
-    if (!isValidPinFormat(pin)) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        ok: false,
-        message: "Invalid PIN format",
-      });
-    }
+// ✅ 3) Treat invalid format as WRONG attempt too
+let isMatch = false;
 
-    // ✅ 3) Check PIN
-    const isMatch = await bcrypt.compare(pin, user.withdrawPinHash);
+if (isValidPinFormat(pin)) {
+  isMatch = await bcrypt.compare(pin, user.withdrawPinHash);
+} else {
+  // invalid format counts as wrong pin
+  isMatch = false;
+}
 
-    if (!isMatch) {
-      const failed = Number(user.withdrawPinFailedAttempts || 0) + 1;
-      user.withdrawPinFailedAttempts = failed;
+if (!isMatch) {
+  const failed = Number(user.withdrawPinFailedAttempts || 0) + 1;
+  user.withdrawPinFailedAttempts = failed;
 
-      let lockedNow = false;
+  let lockedNow = false;
 
-      if (failed >= MAX_PIN_ATTEMPTS) {
-        user.withdrawPinLocked = true;
-        user.withdrawPinLockedAt = new Date();
-        lockedNow = true;
-      }
+  if (failed >= MAX_PIN_ATTEMPTS) {
+    user.withdrawPinLocked = true;
+    user.withdrawPinLockedAt = new Date();
+    lockedNow = true;
+  }
 
-      await user.save({ session });
+  await user.save({ session });
 
-      await session.abortTransaction();
-      session.endSession();
+  // ✅ IMPORTANT: commit so attempts persist
+  await session.commitTransaction();
+  session.endSession();
 
-      return res.status(403).json({
-        ok: false,
-        code: lockedNow ? "WITHDRAW_PIN_LOCKED" : "WITHDRAW_PIN_INCORRECT",
-        message: lockedNow
-          ? "3 incorrect PIN attempts. Please contact support."
-          : "Incorrect withdrawal PIN",
-        attemptsLeft: Math.max(0, MAX_PIN_ATTEMPTS - failed),
-      });
-    }
+  return res.status(403).json({
+    ok: false,
+    code: lockedNow ? "WITHDRAW_PIN_LOCKED" : "WITHDRAW_PIN_INCORRECT",
+    message: lockedNow
+      ? "3 incorrect PIN attempts. Please contact support."
+      : "Incorrect withdrawal PIN",
+    attemptsLeft: Math.max(0, MAX_PIN_ATTEMPTS - failed),
+  });
+}
 
-    // ✅ 4) PIN correct -> reset attempts
-    user.withdrawPinFailedAttempts = 0;
-    user.withdrawPinLocked = false;
-    user.withdrawPinLockedAt = null;
+// ✅ PIN correct -> reset attempts
+user.withdrawPinFailedAttempts = 0;
+user.withdrawPinLocked = false;
+user.withdrawPinLockedAt = null;
 
     // ✅ continue original validation
     if (!amount || isNaN(amount)) {
