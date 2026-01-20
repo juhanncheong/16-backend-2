@@ -10,12 +10,7 @@ const {
   setUserResetCount,
 } = require("../controllers/adminOrdersController");
 
-const {
-  adminListWithdrawals,
-  adminApproveWithdrawal,
-  adminRejectWithdrawal,
-  adminResetUserWithdrawPin,
-} = require("../controllers/adminWithdrawalsController");
+const adminWithdrawalsController = require("../controllers/adminWithdrawalsController");
 
 const WalletTransaction = require("../models/WalletTransaction");
 const mongoose = require("mongoose");
@@ -327,10 +322,16 @@ router.patch("/users/:userId/reset-count/set", protect, adminOnly, setUserResetC
  * ============================
  */
 
-router.get("/withdrawals", protect, adminOnly, adminListWithdrawals);
-router.put("/withdrawals/:id/approve", protect, adminOnly, adminApproveWithdrawal);
-router.put("/withdrawals/:id/reject", protect, adminOnly, adminRejectWithdrawal);
-router.get("/deposits", protect, adminOnly, adminListDeposits);
+router.get("/withdrawals", protect, adminOnly, adminWithdrawalsController.adminListWithdrawals);
+router.put("/withdrawals/:id/approve", protect, adminOnly, adminWithdrawalsController.adminApproveWithdrawal);
+router.put("/withdrawals/:id/reject", protect, adminOnly, adminWithdrawalsController.adminRejectWithdrawal);
+
+router.patch(
+  "/users/:id/withdraw-pin/reset",
+  protect,
+  adminOnly,
+  adminWithdrawalsController.adminResetUserWithdrawPin
+);
 
 /**
  * ============================
