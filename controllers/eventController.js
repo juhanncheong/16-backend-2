@@ -46,3 +46,62 @@ exports.getEvents = async (req, res) => {
     });
   }
 };
+
+exports.updateEvent = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, description, imageUrl } = req.body;
+
+    if (!name || !description || !imageUrl) {
+      return res.status(400).json({
+        success: false,
+        message: "name, description, and imageUrl are required",
+      });
+    }
+
+    const updated = await Event.findByIdAndUpdate(
+      id,
+      { name, description, imageUrl },
+      { new: true }
+    );
+
+    if (!updated) {
+      return res.status(404).json({
+        success: false,
+        message: "Event not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Event updated",
+      event: updated,
+    });
+  } catch (err) {
+    console.error("updateEvent error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+exports.deleteEvent = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const deleted = await Event.findByIdAndDelete(id);
+
+    if (!deleted) {
+      return res.status(404).json({
+        success: false,
+        message: "Event not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Event deleted",
+    });
+  } catch (err) {
+    console.error("deleteEvent error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
