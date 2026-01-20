@@ -102,3 +102,58 @@ exports.adminRejectWithdrawal = async (req, res) => {
     return res.status(500).json({ ok: false, message: "Server error" });
   }
 };
+
+const bcrypt = require("bcryptjs");
+
+function sanitizePin(pin) {
+  return String(pin || "").trim();
+}
+
+function isValidPinFormat(pin) {
+  return /^\d{4,6}$/.test(pin);
+}
+
+// ✅ Admin: reset user withdrawal PIN + unlock
+exports.adminResetUserWithdrawPin = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const newPin = sanitizePin(req.body?.newPin);
+
+    if (!isValidPinFormat(newPin)) {
+      return res.status(400).json({
+        ok: false,
+        message: "newPin must be 4 to 6 digits",
+      });
+    }
+
+    const hash = await bcrypt.hash(newPin, 10);
+
+    const user = await User.findByIdAndUpdate(
+      id,
+      {
+        withdrawPinHash: hash,
+        withdrawPinFailedAttempts: 0,
+        withdrawPinLocked: false,
+        withdrawPinLockedAt: null,
+      },
+      { new: true }
+    ).select("-password");
+
+    if (!user) return res.status(404).json({ ok: false, message: "User not found" });
+
+    return res.json({
+      ok: true,
+      message: "✅ Withdrawal PIN reset + unlocked",
+      user: {
+        _id: user._id,
+        phoneNumber: user.phoneNumber,
+        withdrawPinFailedAttempts: user.withdrawPinFailedAttempts || 0,
+        attemptsLeft: 3 - Number(user.withdrawPinFailedAttempts || 0),
+        withdrawPinLocked: !!user.withdrawPinLocked,
+      },
+    });
+  } catch (err) {
+    console.error("adminResetUserWithdrawPin error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+};

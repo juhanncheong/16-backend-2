@@ -8,6 +8,7 @@ const {
   resetUserOrders,
   setUserOrdersCount,
   setUserResetCount,
+  adminResetUserWithdrawPin,
 } = require("../controllers/adminOrdersController");
 const {
   adminListWithdrawals,
@@ -108,6 +109,9 @@ router.patch("/users/:id/role", protect, adminOnly, async (req, res) => {
     return res.status(500).json({ ok: false, message: err.message });
   }
 });
+
+// ✅ Reset user withdrawal PIN + unlock
+router.patch("/users/:id/withdraw-pin/reset", protect, adminOnly, adminResetUserWithdrawPin);
 
 // ✅ Update user balance
 // mode: "set" -> balance = amount

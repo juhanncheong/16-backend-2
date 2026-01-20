@@ -9,7 +9,6 @@ const userSchema = new mongoose.Schema(
     ordersCompleted: { type: Number, default: 0 }, // 0 - 40
     ordersLimit: { type: Number, default: 40 },
 
-    // ✅ NEW: reward "round" tracking
     totalResetCount: { type: Number, default: 1 },
     lastClaimedResetCount: { type: Number, default: 0 },
 
@@ -22,6 +21,12 @@ const userSchema = new mongoose.Schema(
     isBanned: { type: Boolean, default: false },
     bannedAt: { type: Date, default: null },
     banReason: { type: String, default: "" },
+
+    // ✅ Withdrawal PIN Security
+    withdrawPinHash: { type: String, default: null, select: false }, // hashed only
+    withdrawPinFailedAttempts: { type: Number, default: 0 }, // 0..3
+    withdrawPinLocked: { type: Boolean, default: false },
+    withdrawPinLockedAt: { type: Date, default: null },
 
     // (optional) for later admin logic
     role: { type: String, enum: ["user", "admin"], default: "user" },

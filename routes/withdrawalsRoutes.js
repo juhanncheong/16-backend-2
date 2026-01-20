@@ -5,12 +5,11 @@ const { protect } = require("../middleware/auth");
 const {
   createWithdrawal,
   getMyWithdrawals,
+  setWithdrawalPin,
 } = require("../controllers/withdrawalsController");
 
-// user create withdrawal
+router.post("/set-pin", protect, setWithdrawalPin);
 router.post("/", protect, createWithdrawal);
-
-// user view own history
 router.get("/me", protect, getMyWithdrawals);
 
 module.exports = router;
