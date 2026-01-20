@@ -1,0 +1,104 @@
+const mongoose = require("mongoose");
+const Withdrawal = require("../models/Withdrawal");
+const User = require("../models/User");
+
+// ✅ Admin: list withdrawals (optional filters)
+exports.adminListWithdrawals = async (req, res) => {
+  try {
+    const { status, userId } = req.query;
+
+    const filter = {};
+    if (status) filter.status = String(status).toUpperCase();
+    if (userId) filter.user = userId;
+
+    const withdrawals = await Withdrawal.find(filter)
+      .populate("user", "phoneNumber balance role")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.json({ ok: true, withdrawals });
+  } catch (err) {
+    console.error("adminListWithdrawals error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+};
+
+// ✅ Admin: approve withdrawal
+// Logic: status PENDING -> APPROVED (balance already deducted when user submitted)
+exports.adminApproveWithdrawal = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const wd = await Withdrawal.findById(id);
+    if (!wd) return res.status(404).json({ ok: false, message: "Withdrawal not found" });
+
+    if (wd.status !== "PENDING") {
+      return res.status(400).json({ ok: false, message: "This withdrawal is already processed" });
+    }
+
+    wd.status = "APPROVED";
+    wd.adminActionBy = req.user._id;
+    wd.actionAt = new Date();
+
+    await wd.save();
+
+    return res.json({ ok: true, message: "Withdrawal approved", withdrawal: wd });
+  } catch (err) {
+    console.error("adminApproveWithdrawal error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+};
+
+// ✅ Admin: reject withdrawal
+// Logic: status PENDING -> REJECTED + RETURN BALANCE to user
+exports.adminRejectWithdrawal = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { id } = req.params;
+    const { adminNote } = req.body;
+
+    const wd = await Withdrawal.findById(id).session(session);
+    if (!wd) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ ok: false, message: "Withdrawal not found" });
+    }
+
+    if (wd.status !== "PENDING") {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ ok: false, message: "This withdrawal is already processed" });
+    }
+
+    // ✅ return balance
+    const user = await User.findById(wd.user).session(session);
+    if (!user) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ ok: false, message: "User not found" });
+    }
+
+    user.balance = Number(user.balance || 0) + Number(wd.amount || 0);
+    await user.save({ session });
+
+    // ✅ update withdrawal
+    wd.status = "REJECTED";
+    wd.adminActionBy = req.user._id;
+    wd.adminNote = String(adminNote || "");
+    wd.actionAt = new Date();
+
+    await wd.save({ session });
+
+    await session.commitTransaction();
+    session.endSession();
+
+    return res.json({ ok: true, message: "Withdrawal rejected + balance returned", withdrawal: wd });
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+    console.error("adminRejectWithdrawal error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+};
