@@ -156,10 +156,28 @@ exports.createWithdrawal = async (req, res) => {
     const pin = sanitizePin(withdrawPin);
 
     const user = await User.findById(userId)
-      .select("+withdrawPinHash withdrawPinFailedAttempts withdrawPinLocked withdrawPinLockedAt balance")
+      .select(
+        "+withdrawPinHash withdrawPinFailedAttempts withdrawPinLocked withdrawPinLockedAt balance ordersCompleted ordersLimit"
+      )
       .session(session);
 
     if (!user) throw new Error("User not found");
+
+    // ✅ Orders check (must complete 40 before withdraw)
+    const completed = Number(user.ordersCompleted || 0);
+    const required = Number(user.ordersLimit || 40);
+
+    if (completed < required) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(403).json({
+        ok: false,
+        code: "ORDERS_NOT_COMPLETED",
+        message: `You must complete ${required} orders before withdrawing`,
+        completed,
+        required,
+      });
+    }
 
     if (!user.withdrawPinHash) {
       await session.abortTransaction();
@@ -177,25 +195,28 @@ exports.createWithdrawal = async (req, res) => {
       return res.status(403).json({
         ok: false,
         code: "WITHDRAW_PIN_LOCKED",
-        message: "Withdrawals locked due to wrong PIN attempts",
+        message: "Withdrawals locked. Please contact support.",
       });
     }
 
-    // ✅ Treat invalid format as WRONG attempt too
-    let isMatch = false;
-
-    if (isValidPinFormat(pin)) {
-      isMatch = await bcrypt.compare(pin, user.withdrawPinHash);
-    } else {
-      isMatch = false;
+    if (!pin || !isValidPinFormat(pin)) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({
+        ok: false,
+        code: "INVALID_WITHDRAW_PIN",
+        message: "Withdrawal PIN must be 4 to 12 digits",
+      });
     }
 
-    if (!isMatch) {
-      const failed = Number(user.withdrawPinFailedAttempts || 0) + 1;
+    const okPin = await bcrypt.compare(pin, user.withdrawPinHash);
+
+    // ❌ wrong PIN -> increase attempts and maybe lock
+    if (!okPin) {
+      let failed = Number(user.withdrawPinFailedAttempts || 0) + 1;
       user.withdrawPinFailedAttempts = failed;
 
       let lockedNow = false;
-
       if (failed >= MAX_PIN_ATTEMPTS) {
         user.withdrawPinLocked = true;
         user.withdrawPinLockedAt = new Date();
@@ -231,7 +252,13 @@ exports.createWithdrawal = async (req, res) => {
       throw new Error("Minimum withdrawal is 10");
     }
 
-    const allowedTypes = ["BTC_MAINNET", "ETH_ERC20", "SOL", "USDC_ERC20", "USDT_TRC20"];
+    const allowedTypes = [
+      "BTC_MAINNET",
+      "ETH_ERC20",
+      "SOL",
+      "USDC_ERC20",
+      "USDT_TRC20",
+    ];
     if (!allowedTypes.includes(cryptoType)) {
       throw new Error("Invalid crypto type");
     }
