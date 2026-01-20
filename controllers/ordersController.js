@@ -3,6 +3,7 @@ const User = require("../models/User");
 const OrderPool = require("../models/OrderPool");
 const BonusRule = require("../models/BonusRule");
 const UserOrder = require("../models/UserOrder");
+const VipConfig = require("../models/VipConfig");
 
 let ACTIVE_POOL_CACHE = [];
 let LAST_POOL_REFRESH = 0;
@@ -18,8 +19,7 @@ async function refreshOrderPoolCache(force = false) {
   LAST_POOL_REFRESH = now;
 }
 
-function calcCommission(price, isBonus) {
-  const rate = isBonus ? 0.1 : 0.01;
+function calcCommission(price, rate) {
   return Math.round(price * rate * 100) / 100;
 }
 
@@ -40,6 +40,26 @@ async function pickRandomOrderFast(min, max) {
     .lean();
 }
 
+async function getVipSettings(user) {
+  let config = await VipConfig.findOne().lean();
+
+  // auto create default config if missing
+  if (!config) {
+    config = await VipConfig.create({
+      ranks: [
+        { rank: 1, ordersLimit: 40, commissionRate: 0.01 },
+        { rank: 2, ordersLimit: 60, commissionRate: 0.015 },
+        { rank: 3, ordersLimit: 80, commissionRate: 0.02 },
+      ],
+    });
+  }
+
+  const rank = Number(user.vipRank || 1);
+  const vip = config.ranks.find((r) => r.rank === rank) || config.ranks[0];
+
+  return vip; // { rank, ordersLimit, commissionRate }
+}
+
 async function searchFlights(req, res) {
   try {
     const userId = req.user.userId; // ✅ from protect()
@@ -47,41 +67,43 @@ async function searchFlights(req, res) {
     const user = await User.findById(userId).lean();
     if (!user) return res.status(404).json({ ok: false, message: "User not found" });
 
+    const vip = await getVipSettings(user);
+
     if (user.isBanned) {
       return res.status(403).json({ ok: false, message: "User is banned" });
     }
 
-    // ✅ hard cap
-    if (user.ordersCompleted >= user.ordersLimit) {
-      return res.status(403).json({
-        ok: false,
-        message: "Order limit reached. Contact admin.",
-        completedOrders: user.ordersCompleted,
-        limit: user.ordersLimit,
-      });
-    }
-
-    // ✅ only 1 pending per user
-    const existingPending = await UserOrder.findOne({
-     user: userId,
-     status: "PENDING",
-   })
+ // ✅ only 1 pending per user
+const existingPending = await UserOrder.findOne({
+  user: userId,
+  status: "PENDING",
+})
   .populate("poolOrder", "imageUrl")
   .lean();
 
+if (existingPending) {
+  return res.json({
+    ok: true,
+    status: existingPending.status,
+    orderNumber: existingPending.orderNumber,
+    orderName: existingPending.orderName,
+    price: existingPending.price,
+    commission: existingPending.commission,
+    isBonus: existingPending.isBonus,
+    imageUrl: existingPending.poolOrder?.imageUrl || "",
+  });
+}
 
-    if (existingPending) {
-      return res.json({
-        ok: true,
-        status: existingPending.status,
-        orderNumber: existingPending.orderNumber,
-        orderName: existingPending.orderName,
-        price: existingPending.price,
-        commission: existingPending.commission,
-        isBonus: existingPending.isBonus,
-        imageUrl: existingPending.poolOrder?.imageUrl || "",
-      });
-    }
+// ✅ hard cap AFTER pending check
+if (user.ordersCompleted >= vip.ordersLimit) {
+  return res.status(403).json({
+    ok: false,
+    message: "Order limit reached. Upgrade VIP or contact admin.",
+    completedOrders: user.ordersCompleted,
+    limit: vip.ordersLimit,
+    vipRank: vip.rank,
+  });
+}
 
     const completedCount = Number(user.ordersCompleted ?? 0);
     const safeCompleted = Number.isFinite(completedCount) ? completedCount : 0;
@@ -146,7 +168,8 @@ selected = candidates[Math.floor(Math.random() * candidates.length)] || null;
   }
 }
 
-    const commission = calcCommission(selected.price, isBonus);
+    const rateToUse = isBonus ? 0.1 : vip.commissionRate; 
+    const commission = calcCommission(selected.price, rateToUse);
 
     const created = await UserOrder.create({
       user: userId,
@@ -179,16 +202,25 @@ async function submitOrder(req, res) {
   try {
     const userId = req.user.userId;
 
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ ok: false, message: "User not found" });
+const user = await User.findById(userId);
+if (!user) return res.status(404).json({ ok: false, message: "User not found" });
+
+const vip = await getVipSettings(user);
+
 
     if (user.isBanned) {
       return res.status(403).json({ ok: false, message: "User is banned" });
     }
 
-    if (user.ordersCompleted >= user.ordersLimit) {
-      return res.status(403).json({ ok: false, message: "Order limit reached. Contact admin." });
-    }
+    if (user.ordersCompleted >= vip.ordersLimit) {
+     return res.status(403).json({
+       ok: false,
+       message: "Order limit reached. Upgrade VIP or contact admin.",
+       completedOrders: user.ordersCompleted,
+       limit: vip.ordersLimit,
+       vipRank: vip.rank,
+     });
+   }
 
     const pending = await UserOrder.findOne({ user: userId, status: "PENDING" });
     if (!pending) {
@@ -212,6 +244,7 @@ async function submitOrder(req, res) {
     pending.status = "COMPLETED";
     pending.completedAt = new Date();
 
+    user.ordersLimit = vip.ordersLimit;
     await user.save();
     await pending.save();
 
@@ -221,7 +254,8 @@ async function submitOrder(req, res) {
       newBalance: user.balance,
       commissionEarned: pending.commission,
       completedOrders: user.ordersCompleted,
-      limit: user.ordersLimit,
+      limit: vip.ordersLimit,
+      vipRank: vip.rank,
     });
   } catch (err) {
     console.error("submitOrder error:", err);

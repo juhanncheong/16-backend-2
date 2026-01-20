@@ -11,6 +11,7 @@ const {
 } = require("../controllers/adminOrdersController");
 
 const adminWithdrawalsController = require("../controllers/adminWithdrawalsController");
+const VipConfig = require("../models/VipConfig");
 
 const WalletTransaction = require("../models/WalletTransaction");
 const mongoose = require("mongoose");
@@ -533,6 +534,81 @@ router.put("/signin/rewards-config", protect, adminOnly, async (req, res) => {
   } catch (err) {
     console.error("Admin update rewards-config error:", err);
     return res.status(500).json({ ok: false, message: "Server error" });
+  }
+});
+
+router.get("/vip/config", protect, adminOnly, async (req, res) => {
+  try {
+    let config = await VipConfig.findOne().lean();
+
+    // auto create if missing
+    if (!config) config = await VipConfig.create({});
+
+    return res.json({ ok: true, config });
+  } catch (err) {
+    console.error("Get VIP config error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+});
+
+router.put("/vip/config", protect, adminOnly, async (req, res) => {
+  try {
+    const { ranks } = req.body;
+
+    if (!Array.isArray(ranks) || ranks.length !== 3) {
+      return res.status(400).json({
+        ok: false,
+        message: "ranks must be an array of 3 items (rank 1..3)",
+      });
+    }
+
+    // validate each rank
+    const cleaned = ranks.map((r) => {
+      const rank = Number(r.rank);
+      const ordersLimit = Number(r.ordersLimit);
+      const commissionRate = Number(r.commissionRate);
+
+      if (![1, 2, 3].includes(rank)) throw new Error("Invalid rank");
+      if (!Number.isFinite(ordersLimit) || ordersLimit < 1) throw new Error("Invalid ordersLimit");
+      if (!Number.isFinite(commissionRate) || commissionRate < 0) throw new Error("Invalid commissionRate");
+
+      return { rank, ordersLimit, commissionRate };
+    });
+
+    let config = await VipConfig.findOne();
+    if (!config) config = await VipConfig.create({ ranks: cleaned });
+    else {
+      config.ranks = cleaned;
+      await config.save();
+    }
+
+    return res.json({ ok: true, message: "✅ VIP config updated", config });
+  } catch (err) {
+    console.error("Update VIP config error:", err);
+    return res.status(500).json({ ok: false, message: err.message });
+  }
+});
+
+router.patch("/users/:id/vip-rank", protect, adminOnly, async (req, res) => {
+  try {
+    const { vipRank } = req.body;
+    const rank = Number(vipRank);
+
+    if (![1, 2, 3].includes(rank)) {
+      return res.status(400).json({ ok: false, message: "vipRank must be 1,2,3" });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { vipRank: rank },
+      { new: true }
+    ).select("-password");
+
+    if (!user) return res.status(404).json({ ok: false, message: "User not found" });
+
+    return res.json({ ok: true, message: "✅ VIP rank updated", user });
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message });
   }
 });
 

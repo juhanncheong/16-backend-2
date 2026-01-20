@@ -5,7 +5,7 @@ const userSchema = new mongoose.Schema(
     phoneNumber: { type: String, required: true, unique: true, trim: true },
     password: { type: String, required: true, minlength: 6 },
     balance: { type: Number, default: 0 },
-
+    vipRank: { type: Number, enum: [1, 2, 3], default: 1 },
     ordersCompleted: { type: Number, default: 0 }, // 0 - 40
     ordersLimit: { type: Number, default: 40 },
 
