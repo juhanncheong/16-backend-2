@@ -53,8 +53,31 @@ function safeGetConversations() {
  */
 router.get("/conversations", (req, res) => {
   try {
-    const rows = safeGetConversations();
-    res.json({ conversations: rows });
+    const rows = chatDB
+      .prepare(`
+        SELECT 
+          userId,
+          (
+            SELECT message
+            FROM chat_messages m2
+            WHERE m2.userId = m.userId
+            ORDER BY id DESC
+            LIMIT 1
+          ) AS lastMessage,
+          (
+            SELECT createdAt
+            FROM chat_messages m2
+            WHERE m2.userId = m.userId
+            ORDER BY id DESC
+            LIMIT 1
+          ) AS lastTime
+        FROM chat_messages m
+        GROUP BY userId
+        ORDER BY MAX(id) DESC
+      `)
+      .all();
+
+    res.json({ conversations: rows || [] });
   } catch (err) {
     console.error("chat conversations error:", err);
     res.status(500).json({ message: "Failed to fetch conversations" });

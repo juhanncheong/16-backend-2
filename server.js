@@ -96,32 +96,46 @@ socket.on("user:message", ({ userId, message, tempId }) => {
   });
 });
 
-  // admin replies
-  socket.on("admin:message", ({ userId, message }) => {
-    const msg = String(message || "").trim();
-    if (!userId || !msg) return;
+// admin replies
+socket.on("admin:message", ({ userId, message, clientId }) => {
+  const msg = String(message || "").trim();
+  if (!userId || !msg) return;
 
-    const createdAt = new Date().toISOString();
+  const createdAt = new Date().toISOString();
 
-    chatDB.prepare(`
-      INSERT INTO chat_messages (userId, sender, message, createdAt)
-      VALUES (?, ?, ?, ?)
-    `).run(userId, "admin", msg, createdAt);
+  // ✅ save message to DB
+  const result = chatDB.prepare(`
+    INSERT INTO chat_messages (userId, sender, message, createdAt)
+    VALUES (?, ?, ?, ?)
+  `).run(userId, "admin", msg, createdAt);
 
-    io.to(`user:${userId}`).emit("chat:newMessage", {
-      userId,
-      sender: "admin",
-      message: msg,
-      createdAt,
-    });
-
-    io.to("admins").emit("chat:newMessage", {
-      userId,
-      sender: "admin",
-      message: msg,
-      createdAt,
-    });
+  // ✅ status update back to admin UI (for ✓ ticks)
+  io.to("admins").emit("chat:status", {
+    clientId,                 // matches your optimistic message id
+    messageId: result.lastInsertRowid, // real DB id
+    status: "sent",
   });
+
+  // ✅ send to user
+  io.to(`user:${userId}`).emit("chat:newMessage", {
+    id: result.lastInsertRowid,
+    userId,
+    sender: "admin",
+    message: msg,
+    createdAt,
+    status: "sent",
+  });
+
+  // ✅ show on admin chat screen too
+  io.to("admins").emit("chat:newMessage", {
+    id: result.lastInsertRowid,
+    userId,
+    sender: "admin",
+    message: msg,
+    createdAt,
+    status: "sent",
+  });
+});
 
   socket.on("disconnect", () => {
     console.log("Socket disconnected:", socket.id);
