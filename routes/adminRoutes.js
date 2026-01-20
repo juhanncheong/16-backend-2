@@ -263,8 +263,6 @@ router.patch("/users/:id/reset-password", protect, adminOnly, async (req, res) =
   }
 });
 
-router.patch("/users/:id/withdraw-pin/reset", protect, adminOnly, adminResetUserWithdrawPin);
-
 // Reset user phone number
 router.patch("/users/:id/reset-phone", protect, adminOnly, async (req, res) => {
   try {
