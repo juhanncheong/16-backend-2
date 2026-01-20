@@ -8,13 +8,15 @@ const {
   resetUserOrders,
   setUserOrdersCount,
   setUserResetCount,
-  adminResetUserWithdrawPin,
 } = require("../controllers/adminOrdersController");
+
 const {
   adminListWithdrawals,
   adminApproveWithdrawal,
   adminRejectWithdrawal,
+  adminResetUserWithdrawPin,
 } = require("../controllers/adminWithdrawalsController");
+
 const WalletTransaction = require("../models/WalletTransaction");
 const mongoose = require("mongoose");
 const { adminListDeposits } = require("../controllers/adminDepositsController");
@@ -109,9 +111,6 @@ router.patch("/users/:id/role", protect, adminOnly, async (req, res) => {
     return res.status(500).json({ ok: false, message: err.message });
   }
 });
-
-// ✅ Reset user withdrawal PIN + unlock
-router.patch("/users/:id/withdraw-pin/reset", protect, adminOnly, adminResetUserWithdrawPin);
 
 // ✅ Update user balance
 // mode: "set" -> balance = amount
@@ -268,6 +267,8 @@ router.patch("/users/:id/reset-password", protect, adminOnly, async (req, res) =
     return res.status(500).json({ ok: false, message: err.message });
   }
 });
+
+router.patch("/users/:id/withdraw-pin/reset", protect, adminOnly, adminResetUserWithdrawPin);
 
 // Reset user phone number
 router.patch("/users/:id/reset-phone", protect, adminOnly, async (req, res) => {
