@@ -13,6 +13,7 @@ const walletTransactionsRoutes = require("./routes/walletTransactionsRoutes");
 const signinRoutes = require("./routes/signinRoutes");
 const chatRoutes = require("./routes/chatRoutes");
 const eventRoutes = require("./routes/eventRoutes");
+const vipRoutes = require("./routes/vipRoutes");
 
 const http = require("http");
 const { Server } = require("socket.io");
@@ -44,7 +45,8 @@ async function startServer() {
   app.use("/api/signin", signinRoutes);
   app.use("/api/chat", chatRoutes);
   app.use("/api", eventRoutes);
-  
+  app.use("/api", vipRoutes);
+
   const server = http.createServer(app);
 
 const io = new Server(server, {
