@@ -129,6 +129,7 @@ socket.on("admin:message", ({ userId, message, clientId }) => {
   // ✅ show on admin chat screen too
   io.to("admins").emit("chat:newMessage", {
     id: result.lastInsertRowid,
+    clientId,
     userId,
     sender: "admin",
     message: msg,
