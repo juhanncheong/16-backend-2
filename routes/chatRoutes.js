@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const chatDB = require("./chatDB");
+const chatDB = require("../chatDB");
 
 /**
  * ✅ One-time: create admin_notes table (nickname per user, admin-only)
