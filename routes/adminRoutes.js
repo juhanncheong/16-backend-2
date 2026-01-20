@@ -591,16 +591,20 @@ router.put("/vip/config", protect, adminOnly, async (req, res) => {
 
 router.patch("/users/:id/vip-rank", protect, adminOnly, async (req, res) => {
   try {
-    const { vipRank } = req.body;
-    const rank = Number(vipRank);
+    const rank = Number(req.body.vipRank);
 
     if (![1, 2, 3].includes(rank)) {
       return res.status(400).json({ ok: false, message: "vipRank must be 1,2,3" });
     }
 
+    let config = await VipConfig.findOne().lean();
+    if (!config) config = await VipConfig.create({});
+
+    const vip = config.ranks.find((r) => r.rank === rank) || config.ranks[0];
+
     const user = await User.findByIdAndUpdate(
       req.params.id,
-      { vipRank: rank },
+      { vipRank: rank, ordersLimit: vip.ordersLimit },
       { new: true }
     ).select("-password");
 
