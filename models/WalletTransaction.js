@@ -6,7 +6,7 @@ const walletTransactionSchema = new mongoose.Schema(
 
     type: {
       type: String,
-      enum: ["DEPOSIT", "COMMISSION", "ADMIN_ADJUST", "ORDER_SUBMIT"],
+      enum: ["DEPOSIT", "COMMISSION", "ADMIN_ADJUST", "ORDER_SUBMIT", "TRIAL_CREDIT", "TRIAL_REVERSAL",],
       required: true,
     },
 

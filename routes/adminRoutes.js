@@ -191,6 +191,129 @@ router.patch("/users/:id/balance", protect, adminOnly, async (req, res) => {
   }
 });
 
+// ✅ Admin give trial bonus (virtual, non-withdrawable)
+router.post("/users/:id/trial-credit", protect, adminOnly, async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const amount = Number(req.body.amount || 0);
+    const note = String(req.body.note || "Trial bonus");
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({
+        ok: false,
+        message: "amount must be a positive number",
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ ok: false, message: "User not found" });
+    }
+
+    // ❌ Prevent giving trial twice
+    const existing = await WalletTransaction.findOne({
+      userId: user._id,
+      type: "TRIAL_CREDIT",
+    });
+
+    if (existing) {
+      return res.status(409).json({
+        ok: false,
+        message: "Trial bonus already granted to this user",
+      });
+    }
+
+    await WalletTransaction.create({
+      userId: user._id,
+      type: "TRIAL_CREDIT",
+      amount,
+      balanceBefore: user.balance,
+      balanceAfter: user.balance, // ❗ not touching real balance
+      note,
+    });
+
+    return res.json({
+      ok: true,
+      message: "✅ Trial bonus granted",
+      userId: user._id,
+      trialAmount: amount,
+    });
+  } catch (err) {
+    console.error("admin trial-credit error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+});
+
+// ✅ Admin revoke trial bonus (remove remaining virtual trial credit)
+router.post("/users/:id/trial-revoke", protect, adminOnly, async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const note = String(req.body.note || "Admin revoked trial bonus");
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ ok: false, message: "User not found" });
+
+    // Total trial credited
+    const creditAgg = await WalletTransaction.aggregate([
+      {
+        $match: {
+          userId: new mongoose.Types.ObjectId(user._id),
+          type: "TRIAL_CREDIT",
+        },
+      },
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]);
+
+    const credited = Number(creditAgg[0]?.total || 0);
+
+    // Total already reversed (stored as negative numbers)
+    const revAgg = await WalletTransaction.aggregate([
+      {
+        $match: {
+          userId: new mongoose.Types.ObjectId(user._id),
+          type: "TRIAL_REVERSAL",
+        },
+      },
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]);
+
+    const reversedAbs = Math.abs(Number(revAgg[0]?.total || 0));
+
+    const remaining = Math.max(0, credited - reversedAbs);
+
+    if (remaining <= 0) {
+      return res.json({
+        ok: true,
+        message: "No remaining trial bonus to revoke",
+        credited,
+        reversed: reversedAbs,
+        remaining: 0,
+      });
+    }
+
+    await WalletTransaction.create({
+      userId: user._id,
+      type: "TRIAL_REVERSAL",
+      amount: -remaining,
+      balanceBefore: user.balance,
+      balanceAfter: user.balance,
+      note,
+    });
+
+    return res.json({
+      ok: true,
+      message: "✅ Trial bonus revoked",
+      credited,
+      reversed: reversedAbs + remaining,
+      remaining: 0,
+      revokedAmount: remaining,
+    });
+  } catch (err) {
+    console.error("admin trial-revoke error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+});
+
 // Delete user
 router.delete("/users/:id", protect, adminOnly, async (req, res) => {
   try {

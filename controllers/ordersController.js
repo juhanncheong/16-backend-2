@@ -4,6 +4,8 @@ const OrderPool = require("../models/OrderPool");
 const BonusRule = require("../models/BonusRule");
 const UserOrder = require("../models/UserOrder");
 const VipConfig = require("../models/VipConfig");
+const { getLedgerTotal } = require("../utils/balance");
+const WalletTransaction = require("../models/WalletTransaction");
 
 let ACTIVE_POOL_CACHE = [];
 let LAST_POOL_REFRESH = 0;
@@ -126,7 +128,8 @@ if (user.ordersCompleted >= vip.ordersLimit) {
       selected = bonusRule.poolOrder;
       isBonus = true;
     } else {
-  const balance = Number(user.balance || 0);
+  const ledgerTotal = await getLedgerTotal(user._id);
+  const balance = Number(user.balance || 0) + Number(ledgerTotal || 0);
 
   const min1 = Math.floor(balance * 0.5);
   const max1 = Math.floor(balance * 0.9);
@@ -228,21 +231,65 @@ const vip = await getVipSettings(user);
     }
 
     // ✅ insufficient points
-    if (user.balance < pending.price) {
+    const ledgerTotal = await getLedgerTotal(user._id);
+    const availableBalance = Number(user.balance || 0) + Number(ledgerTotal || 0);
+
+    if (availableBalance < pending.price) {
       return res.status(200).json({
         ok: false,
         message: "Insufficient points",
         required: pending.price,
-        balance: user.balance,
+        balance: availableBalance,
       });
     }
 
     // ✅ ONLY reward commission (do not deduct price)
     user.balance += pending.commission;
     user.ordersCompleted += 1;
-
     pending.status = "COMPLETED";
     pending.completedAt = new Date();
+
+    // ✅ Auto trial reversal when user finishes required orders
+if (user.ordersCompleted >= vip.ordersLimit) {
+  const trialRows = await WalletTransaction.aggregate([
+    {
+      $match: {
+        userId: new mongoose.Types.ObjectId(user._id),
+        type: "TRIAL_CREDIT",
+      },
+    },
+    { $group: { _id: null, total: { $sum: "$amount" } } },
+  ]);
+
+  const trialTotal = Number(trialRows[0]?.total || 0);
+
+  if (trialTotal > 0) {
+    // Prevent duplicate reversals: only reverse if not already reversed fully
+    const revRows = await WalletTransaction.aggregate([
+      {
+        $match: {
+          userId: new mongoose.Types.ObjectId(user._id),
+          type: "TRIAL_REVERSAL",
+        },
+      },
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]);
+
+    const reversedTotal = Math.abs(Number(revRows[0]?.total || 0));
+    const remaining = Math.max(0, trialTotal - reversedTotal);
+
+    if (remaining > 0) {
+      await WalletTransaction.create({
+        userId: user._id,
+        type: "TRIAL_REVERSAL",
+        amount: -remaining,
+        balanceBefore: user.balance,
+        balanceAfter: user.balance,
+        note: "Trial bonus expired (orders completed)",
+      });
+    }
+  }
+}
 
     user.ordersLimit = vip.ordersLimit;
     await user.save();

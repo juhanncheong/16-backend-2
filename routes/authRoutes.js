@@ -2,6 +2,9 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const InvitationCode = require("../models/InvitationCode");
+const WalletTransaction = require("../models/WalletTransaction");
+const mongoose = require("mongoose");
+const { getLedgerTotal } = require("../utils/balance");
 
 const router = express.Router();
 const jwt = require("jsonwebtoken");
@@ -123,10 +126,18 @@ router.post("/login", async (req, res) => {
 
 // ✅ ME
 router.get("/me", protect, async (req, res) => {
-  const user = await User.findById(req.user.userId).select("-password");
+  const user = await User.findById(req.user.userId).select("-password").lean();
   if (!user) return res.status(404).json({ message: "User not found" });
 
-  res.json({ user });
+  const ledgerTotal = await getLedgerTotal(user._id);
+  const availableBalance = Number(user.balance || 0) + Number(ledgerTotal || 0);
+
+  res.json({
+    user: {
+      ...user,
+      availableBalance, // ✅ show this in frontend
+    },
+  });
 });
 
 // ✅ CHANGE PASSWORD (requires old password)
