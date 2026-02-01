@@ -126,18 +126,24 @@ router.post("/login", async (req, res) => {
 
 // ✅ ME
 router.get("/me", protect, async (req, res) => {
-  const user = await User.findById(req.user.userId).select("-password").lean();
-  if (!user) return res.status(404).json({ message: "User not found" });
+  try {
+    const user = await User.findById(req.user.userId).select("-password").lean();
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-  const ledgerTotal = await getLedgerTotal(user._id);
-  const availableBalance = Number(user.balance || 0) + Number(ledgerTotal || 0);
+    const ledgerTotal = await getLedgerTotal(user._id);
+    const availableBalance = Number(user.balance || 0) + Number(ledgerTotal || 0);
 
-  res.json({
-    user: {
-      ...user,
-      availableBalance, // ✅ show this in frontend
-    },
-  });
+    return res.json({
+      user: {
+        ...user,
+        balance: availableBalance,
+        availableBalance,
+      },
+    });
+  } catch (err) {
+    console.error("GET /me error:", err);
+    return res.status(500).json({ message: "Server error" });
+  }
 });
 
 // ✅ CHANGE PASSWORD (requires old password)
