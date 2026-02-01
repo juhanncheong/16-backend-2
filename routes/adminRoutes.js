@@ -314,6 +314,62 @@ router.post("/users/:id/trial-revoke", protect, adminOnly, async (req, res) => {
   }
 });
 
+// ✅ Admin trial summary (credited / reversed / remaining)
+router.get("/users/:id/trial-summary", protect, adminOnly, async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    const user = await User.findById(userId).select("_id phoneNumber balance");
+    if (!user) return res.status(404).json({ ok: false, message: "User not found" });
+
+    // Total trial credited
+    const creditAgg = await WalletTransaction.aggregate([
+      {
+        $match: {
+          userId: new mongoose.Types.ObjectId(user._id),
+          type: "TRIAL_CREDIT",
+        },
+      },
+      { $group: { _id: null, total: { $sum: "$amount" }, lastAt: { $max: "$createdAt" } } },
+    ]);
+
+    const credited = Number(creditAgg[0]?.total || 0);
+    const lastCreditAt = creditAgg[0]?.lastAt || null;
+
+    // Total already reversed (stored as negative)
+    const revAgg = await WalletTransaction.aggregate([
+      {
+        $match: {
+          userId: new mongoose.Types.ObjectId(user._id),
+          type: "TRIAL_REVERSAL",
+        },
+      },
+      { $group: { _id: null, total: { $sum: "$amount" }, lastAt: { $max: "$createdAt" } } },
+    ]);
+
+    const reversedAbs = Math.abs(Number(revAgg[0]?.total || 0));
+    const lastReversalAt = revAgg[0]?.lastAt || null;
+
+    const remaining = Math.max(0, credited - reversedAbs);
+
+    return res.json({
+      ok: true,
+      userId: user._id,
+      phoneNumber: user.phoneNumber,
+      credited,
+      reversed: reversedAbs,
+      remaining,
+      lastCreditAt,
+      lastReversalAt,
+      hasTrial: credited > 0,
+      isFullyRevoked: remaining <= 0 && credited > 0,
+    });
+  } catch (err) {
+    console.error("admin trial-summary error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+});
+
 // Delete user
 router.delete("/users/:id", protect, adminOnly, async (req, res) => {
   try {
