@@ -29,10 +29,7 @@ async function startServer() {
 
   // ✅ CORS: allow your frontend (Live Server / Vite / localhost)
   app.use(cors({ origin: true, credentials: true }));
-
-  await connectDB();
-  console.log("✅ MongoDB connected, starting server...");
-
+  
   // ✅ Routes
   app.use("/api/admin/invites", adminInvitesRoutes);
   app.use("/api/admin", adminRoutes);
@@ -147,10 +144,17 @@ socket.on("admin:message", ({ userId, message, clientId }) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
+// Start server first
+const PORT = process.env.PORT || 8000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+// Connect DB in background (don’t block startup)
+connectDB()
+  .then(() => console.log("✅ MongoDB connected"))
+  .catch((err) => console.error("❌ MongoDB connection failed:", err));
+
 }
 
 startServer().catch((err) => console.error("❌ Server failed:", err));
