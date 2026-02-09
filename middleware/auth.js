@@ -31,6 +31,14 @@ const protect = async (req, res, next) => {
       role: decoded.role || "user",
     };
 
+    // ✅ Enforce ban globally (kills existing sessions)
+    const dbUser = await User.findById(req.user.userId).select("isBanned");
+    if (!dbUser) return res.status(401).json({ message: "User not found" });
+
+    if (dbUser.isBanned) {
+      return res.status(403).json({ message: "Your account has been banned." });
+    }
+
     // ✅ Update lastOnlineAt (only if last update > 60s ago)
     User.updateOne(
       {
