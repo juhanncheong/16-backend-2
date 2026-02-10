@@ -191,6 +191,8 @@ router.patch("/users/:id/balance", protect, adminOnly, async (req, res) => {
   }
 });
 
+router.get("/deposits", protect, adminOnly, adminListDeposits);
+
 // ✅ Admin give trial bonus (virtual, non-withdrawable)
 router.post("/users/:id/trial-credit", protect, adminOnly, async (req, res) => {
   try {
