@@ -1,4 +1,10 @@
-const WalletTransaction = require("../models/WalletTransaction");
+// adminDepositsController.js
+const mongoose = require("mongoose");
+const WalletTransaction = require("../models/WalletTransaction"); // <-- adjust path if needed
+
+function isValidObjectId(v) {
+  return mongoose.Types.ObjectId.isValid(v);
+}
 
 function startOfToday() {
   const d = new Date();
@@ -9,73 +15,87 @@ function startOfToday() {
 exports.adminListDeposits = async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page || "1", 10));
-    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit || "10", 10)));
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "10", 10)));
     const skip = (page - 1) * limit;
 
-    // ✅ only DEPOSIT transactions
-    const baseFilter = { type: "DEPOSIT" };
-
-    // optional filters
+    // Your UI might pass `q` or `userId`
     const q = String(req.query.q || "").trim();
     const userId = String(req.query.userId || "").trim();
+    const pickedUser = userId || q;
 
-    if (userId) baseFilter.userId = userId;
+    // TABLE: show both DEPOSIT and ADMIN_ADJUST
+    const listFilter = { type: { $in: ["DEPOSIT", "ADMIN_ADJUST"] } };
 
-    // We’ll filter user phone by populate match if q provided
-    // but Mongo can't directly query populated field, so we do a simple approach:
-    // if q looks like a Mongo id -> filter userId
-    if (q && q.length >= 18) {
-      baseFilter.userId = q;
+    // STATS: deposits only
+    const statsFilter = { type: "DEPOSIT" };
+
+    if (pickedUser && isValidObjectId(pickedUser)) {
+      listFilter.userId = new mongoose.Types.ObjectId(pickedUser);
+      statsFilter.userId = new mongoose.Types.ObjectId(pickedUser);
     }
 
-    // ✅ total count
-    const total = await WalletTransaction.countDocuments(baseFilter);
-
-    // ✅ list
-    const deposits = await WalletTransaction.find(baseFilter)
-      .populate("userId", "phoneNumber balance role")
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean();
-
-    // ✅ stats
-    const todayStart = startOfToday();
-
-    const totalAmountAgg = await WalletTransaction.aggregate([
-      { $match: baseFilter },
-      { $group: { _id: null, amount: { $sum: "$amount" }, count: { $sum: 1 } } },
+    // ---- TABLE DATA (both types) ----
+    const [rows, totalRows] = await Promise.all([
+      WalletTransaction.find(listFilter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate("userId", "phoneNumber email username") // adjust fields to your User schema
+        .lean(),
+      WalletTransaction.countDocuments(listFilter),
     ]);
 
-    const todayAgg = await WalletTransaction.aggregate([
-      { $match: { ...baseFilter, createdAt: { $gte: todayStart } } },
-      { $group: { _id: null, amount: { $sum: "$amount" }, count: { $sum: 1 } } },
+    // ---- STATS (DEPOSIT only) ----
+    const today = startOfToday();
+
+    const [depositTotalsAgg, todayTotalsAgg] = await Promise.all([
+      WalletTransaction.aggregate([
+        { $match: statsFilter },
+        {
+          $group: {
+            _id: null,
+            count: { $sum: 1 },
+            amount: { $sum: "$amount" },
+          },
+        },
+      ]),
+      WalletTransaction.aggregate([
+        { $match: { ...statsFilter, createdAt: { $gte: today } } },
+        {
+          $group: {
+            _id: null,
+            count: { $sum: 1 },
+            amount: { $sum: "$amount" },
+          },
+        },
+      ]),
     ]);
 
-    const totalAmount = totalAmountAgg?.[0]?.amount || 0;
-    const totalCount = totalAmountAgg?.[0]?.count || 0;
+    const totalDeposits = depositTotalsAgg[0]?.count || 0;
+    const totalDepositAmount = Number(depositTotalsAgg[0]?.amount || 0);
 
-    const todayAmount = todayAgg?.[0]?.amount || 0;
-    const todayCount = todayAgg?.[0]?.count || 0;
+    const todayDeposits = todayTotalsAgg[0]?.count || 0;
+    const todayDepositAmount = Number(todayTotalsAgg[0]?.amount || 0);
+
+    const totalPages = Math.max(1, Math.ceil(totalRows / limit));
 
     return res.json({
-      ok: true,
-      deposits,
-      stats: {
-        totalCount,
-        totalAmount,
-        todayCount,
-        todayAmount,
-      },
+      deposits: rows, // includes DEPOSIT + ADMIN_ADJUST
       pagination: {
         page,
         limit,
-        total,
-        pages: Math.max(1, Math.ceil(total / limit)),
+        total: totalRows, // count of rows shown (both types)
+        totalPages,
+      },
+      stats: {
+        totalDeposits, // DEPOSIT only
+        totalDepositAmount, // DEPOSIT only
+        todayDeposits, // DEPOSIT only
+        todayDepositAmount, // DEPOSIT only
       },
     });
   } catch (err) {
     console.error("adminListDeposits error:", err);
-    return res.status(500).json({ ok: false, message: "Server error" });
+    return res.status(500).json({ message: "Server error" });
   }
 };
