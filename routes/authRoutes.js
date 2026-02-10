@@ -130,14 +130,13 @@ router.get("/me", protect, async (req, res) => {
     const user = await User.findById(req.user.userId).select("-password").lean();
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    const ledgerTotal = await getLedgerTotal(user._id);
-    const availableBalance = Number(user.balance || 0) + Number(ledgerTotal || 0);
+    const cleanBalance = Number(user.balance || 0);
 
     return res.json({
       user: {
         ...user,
-        balance: availableBalance,
-        availableBalance,
+        balance: cleanBalance,
+        availableBalance: cleanBalance, // keep for frontend
       },
     });
   } catch (err) {
