@@ -24,7 +24,7 @@ const Content = require("../models/Content");
 const router = express.Router();
 
 // ✅ Get all users
-router.get("/users", protect, adminOnly, async (req, res) => {
+router.get("/users", protect, async (req, res) => {
   try {
     const users = await User.find()
       .select("-password")
