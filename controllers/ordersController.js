@@ -25,6 +25,18 @@ function calcCommission(price, rate) {
   return Math.round(price * rate * 100) / 100;
 }
 
+function buildPendingStats(price, commission, availableBalance, isBonus) {
+  const safePrice = Number(price || 0);
+  const safeCommission = Number(commission || 0);
+  const safeAvailable = Number(availableBalance || 0);
+
+  return {
+    availableBalance: safeAvailable,
+    shortBalance: isBonus ? safeAvailable - safePrice : safeAvailable,
+    pendingAmount: isBonus ? safePrice + safeCommission : 0,
+  };
+}
+
 async function pickRandomOrderFast(min, max) {
   const query = {
     isActive: true,
@@ -75,37 +87,50 @@ async function searchFlights(req, res) {
       return res.status(403).json({ ok: false, message: "User is banned" });
     }
 
- // ✅ only 1 pending per user
-const existingPending = await UserOrder.findOne({
-  user: userId,
-  status: "PENDING",
-})
-  .populate("poolOrder", "imageUrl")
-  .lean();
+    const ledgerTotal = await getLedgerTotal(user._id);
+    const availableBalance = Number(user.balance || 0) + Number(ledgerTotal || 0);
 
-if (existingPending) {
-  return res.json({
-    ok: true,
-    status: existingPending.status,
-    orderNumber: existingPending.orderNumber,
-    orderName: existingPending.orderName,
-    price: existingPending.price,
-    commission: existingPending.commission,
-    isBonus: existingPending.isBonus,
-    imageUrl: existingPending.poolOrder?.imageUrl || "",
-  });
-}
+     // ✅ only 1 pending per user
+    const existingPending = await UserOrder.findOne({
+      user: userId,
+      status: "PENDING",
+    })
+      .populate("poolOrder", "imageUrl")
+      .lean();
 
-// ✅ hard cap AFTER pending check
-if (user.ordersCompleted >= vip.ordersLimit) {
-  return res.status(403).json({
-    ok: false,
-    message: "Order limit reached. Upgrade VIP or contact admin.",
-    completedOrders: user.ordersCompleted,
-    limit: vip.ordersLimit,
-    vipRank: vip.rank,
-  });
-}
+    if (existingPending) {
+      const stats = buildPendingStats(
+        existingPending.price,
+        existingPending.commission,
+        availableBalance,
+        existingPending.isBonus
+      );
+
+      return res.json({
+        ok: true,
+        status: existingPending.status,
+        orderNumber: existingPending.orderNumber,
+        orderName: existingPending.orderName,
+        price: existingPending.price,
+        commission: existingPending.commission,
+        isBonus: existingPending.isBonus,
+        imageUrl: existingPending.poolOrder?.imageUrl || "",
+        availableBalance: stats.availableBalance,
+        shortBalance: stats.shortBalance,
+        pendingAmount: stats.pendingAmount,
+      });
+    }
+
+    // ✅ hard cap AFTER pending check
+    if (user.ordersCompleted >= vip.ordersLimit) {
+      return res.status(403).json({
+        ok: false,
+        message: "Order limit reached. Upgrade VIP or contact admin.",
+        completedOrders: user.ordersCompleted,
+        limit: vip.ordersLimit,
+        vipRank: vip.rank,
+      });
+    }
 
     const completedCount = Number(user.ordersCompleted ?? 0);
     const safeCompleted = Number.isFinite(completedCount) ? completedCount : 0;
@@ -128,19 +153,18 @@ if (user.ordersCompleted >= vip.ordersLimit) {
       selected = bonusRule.poolOrder;
       isBonus = true;
     } else {
-  const ledgerTotal = await getLedgerTotal(user._id);
-  const balance = Number(user.balance || 0) + Number(ledgerTotal || 0);
+      const balance = availableBalance;
 
-  const min1 = Math.floor(balance * 0.5);
-  const max1 = Math.floor(balance * 0.9);
+      const min1 = Math.floor(balance * 0.5);
+      const max1 = Math.floor(balance * 0.9);
 
-  const min2 = Math.floor(balance * 0.3);
-  const max2 = Math.floor(balance * 0.95);
+      const min2 = Math.floor(balance * 0.3);
+      const max2 = Math.floor(balance * 0.95);
 
-  const min3 = Math.floor(balance * 0.1);
-  const max3 = Math.floor(balance * 1.0);
+      const min3 = Math.floor(balance * 0.1);
+      const max3 = Math.floor(balance * 1.0);
 
-  await refreshOrderPoolCache();
+      await refreshOrderPoolCache();
 
 const candidates1 = ACTIVE_POOL_CACHE.filter(
   (o) => o.price >= min1 && o.price <= max1
@@ -185,6 +209,13 @@ selected = candidates[Math.floor(Math.random() * candidates.length)] || null;
       isBonus,
     });
 
+    const stats = buildPendingStats(
+      created.price,
+      created.commission,
+      availableBalance,
+      created.isBonus
+    );
+
     return res.json({
       ok: true,
       status: created.status,
@@ -194,6 +225,9 @@ selected = candidates[Math.floor(Math.random() * candidates.length)] || null;
       commission: created.commission,
       isBonus: created.isBonus,
       imageUrl: selected.imageUrl || "",
+      availableBalance: stats.availableBalance,
+      shortBalance: stats.shortBalance,
+      pendingAmount: stats.pendingAmount,
     });
   } catch (err) {
     console.error("searchFlights error:", err);
