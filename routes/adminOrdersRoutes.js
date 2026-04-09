@@ -11,6 +11,7 @@ const {
   deletePoolOrder,
   listUserBonusRules,
   disableBonusRule,
+  deleteBonusRule,
 } = require("../controllers/adminOrdersController");
 
 router.post("/pool/create", protect, adminOnly, createPoolOrder);
@@ -22,6 +23,7 @@ router.delete("/pool/:id", protect, adminOnly, deletePoolOrder);
 router.post("/bonus/create", protect, adminOnly, createBonusRule);
 router.get("/bonus/user/:userId", protect, adminOnly, listUserBonusRules);
 router.patch("/bonus/:id/disable", protect, adminOnly, disableBonusRule);
+router.delete("/bonus/:id", protect, adminOnly, deleteBonusRule);
 
 router.post("/users/:userId/reset-orders", protect, adminOnly, resetUserOrders);
 

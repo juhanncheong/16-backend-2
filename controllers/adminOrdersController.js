@@ -183,6 +183,32 @@ async function disableBonusRule(req, res) {
   }
 }
 
+// ✅ delete bonus rule
+async function deleteBonusRule(req, res) {
+  try {
+    const { id } = req.params;
+
+    const deleted = await BonusRule.findByIdAndDelete(id);
+    if (!deleted) {
+      return res.status(404).json({
+        ok: false,
+        message: "Bonus rule not found",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      message: "Bonus rule deleted",
+    });
+  } catch (err) {
+    console.error("deleteBonusRule error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Server error",
+    });
+  }
+}
+
 // ✅ reset user orders (admin only)
 async function resetUserOrders(req, res) {
   try {
@@ -341,6 +367,7 @@ module.exports = {
   createBonusRule,
   listUserBonusRules,
   disableBonusRule,
+  deleteBonusRule,
   resetUserOrders,
   setUserOrdersCount,
   setUserResetCount,
