@@ -62,12 +62,13 @@ router.get("/users", protect, adminOnly, async (req, res) => {
       users.map(async (u) => {
         const pending = pendingMap.get(String(u._id)) || null;
 
-        const ledgerTotal = await getLedgerTotal(u._id);
-        const availableBalance = Number(u.balance || 0) + Number(ledgerTotal || 0);
-
-        let displayBalance = availableBalance;
+        const dbBalance = Number(u.balance || 0);
+        let availableBalance = dbBalance;
+        let displayBalance = dbBalance;
 
         if (pending && pending.isBonus) {
+          const ledgerTotal = await getLedgerTotal(u._id);
+          availableBalance = dbBalance + Number(ledgerTotal || 0);
           displayBalance = availableBalance - Number(pending.price || 0);
         }
 
