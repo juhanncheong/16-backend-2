@@ -44,16 +44,11 @@ async function getNextUid() {
   return String(counter.seq);
 }
 
-userSchema.pre("save", async function (next) {
-  try {
-    if (!this.isNew) return next();
-    if (this.uid) return next();
+userSchema.pre("save", async function () {
+  if (!this.isNew) return;
+  if (this.uid) return;
 
-    this.uid = await getNextUid();
-    next();
-  } catch (err) {
-    next(err);
-  }
+  this.uid = await getNextUid();
 });
 
 module.exports = mongoose.model("User", userSchema);
