@@ -12,7 +12,7 @@ exports.adminListWithdrawals = async (req, res) => {
     if (userId) filter.user = userId;
 
     const withdrawals = await Withdrawal.find(filter)
-      .populate("user", "phoneNumber balance role")
+      .populate("user", "uid phoneNumber balance role")
       .sort({ createdAt: -1 })
       .lean();
 
