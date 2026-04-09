@@ -4,6 +4,7 @@ const User = require("../models/User");
 const WalletTransaction = require("../models/WalletTransaction");
 const mongoose = require("mongoose");
 const { getLedgerTotal } = require("../utils/balance");
+const UserOrder = require("../models/UserOrder");
 
 const router = express.Router();
 const jwt = require("jsonwebtoken");
@@ -198,12 +199,39 @@ router.get("/me", protect, async (req, res) => {
     const reversed = Math.abs(Number(revAgg[0]?.total || 0));
     const trialBonusRemaining = Math.max(0, credited - reversed);
 
+    const now = new Date();
+
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date(now);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const dailyCommissionAgg = await UserOrder.aggregate([
+      {
+        $match: {
+          user: new mongoose.Types.ObjectId(user._id),
+          status: "COMPLETED",
+          completedAt: { $gte: startOfDay, $lte: endOfDay },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$commission" },
+        },
+      },
+    ]);
+
+    const dailyCommission = Number(dailyCommissionAgg[0]?.total || 0);
+
     return res.json({
       user: {
         ...user,
         balance: cleanBalance,
         availableBalance,
         trialBonusRemaining,
+        dailyCommission,
       },
     });
   } catch (err) {
