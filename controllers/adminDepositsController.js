@@ -34,13 +34,12 @@ exports.adminListDeposits = async (req, res) => {
       statsFilter.userId = new mongoose.Types.ObjectId(pickedUser);
     }
 
-    // ---- TABLE DATA (both types) ----
     const [rows, totalRows] = await Promise.all([
       WalletTransaction.find(listFilter)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .populate("userId", "phoneNumber email username") // adjust fields to your User schema
+        .populate("userId", "uid phoneNumber")
         .lean(),
       WalletTransaction.countDocuments(listFilter),
     ]);
