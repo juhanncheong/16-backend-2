@@ -1,6 +1,4 @@
 const express = require("express");
-const crypto = require("crypto");
-const InvitationCode = require("../models/InvitationCode");
 const User = require("../models/User");
 const { protect, adminOnly } = require("../middleware/auth");
 const bcrypt = require("bcryptjs");
@@ -22,62 +20,32 @@ const SigninRewardRule = require("../models/SigninRewardRule");
 
 const router = express.Router();
 
-/**
- * ============================
- * ✅ INVITATION CODES
- * ============================
- */
-
-// ✅ Admin generates a new invitation code
-router.post("/invite/create", protect, adminOnly, async (req, res) => {
-  try {
-    const code = crypto.randomBytes(4).toString("hex").toUpperCase(); // "A1B2C3D4"
-
-    const newInvite = await InvitationCode.create({
-      code,
-      isUsed: false,
-      usedBy: null,
-      usedAt: null,
-    });
-
-    return res.status(201).json({
-      ok: true,
-      message: "✅ Invitation code generated",
-      invitationCode: newInvite.code,
-    });
-  } catch (err) {
-    console.error("Invite Create Error:", err.message);
-    return res.status(500).json({ ok: false, message: "Server error" });
-  }
-});
-
-// ✅ Get invites list
-router.get("/invites", protect, adminOnly, async (req, res) => {
-  try {
-    const invites = await InvitationCode.find()
-      .sort({ createdAt: -1 })
-      .limit(50);
-
-    return res.json({ ok: true, invites });
-  } catch (err) {
-    return res.status(500).json({ ok: false, message: err.message });
-  }
-});
-
-/**
- * ============================
- * ✅ USERS
- * ============================
- */
-
 // ✅ Get all users
 router.get("/users", protect, adminOnly, async (req, res) => {
   try {
     const users = await User.find()
       .select("-password")
-      .sort({ createdAt: -1 });
+      .populate("referredBy", "phoneNumber referralCode")
+      .sort({ createdAt: -1 })
+      .lean();
 
-    return res.json({ ok: true, users });
+    const userIds = users.map((u) => u._id);
+
+    const counts = await User.aggregate([
+      { $match: { referredBy: { $in: userIds } } },
+      { $group: { _id: "$referredBy", count: { $sum: 1 } } },
+    ]);
+
+    const referralCountMap = new Map(
+      counts.map((x) => [String(x._id), x.count])
+    );
+
+    const enrichedUsers = users.map((u) => ({
+      ...u,
+      referralCount: referralCountMap.get(String(u._id)) || 0,
+    }));
+
+    return res.json({ ok: true, users: enrichedUsers });
   } catch (err) {
     return res.status(500).json({ ok: false, message: err.message });
   }
@@ -230,7 +198,7 @@ router.post("/users/:id/trial-credit", protect, adminOnly, async (req, res) => {
       type: "TRIAL_CREDIT",
       amount,
       balanceBefore: user.balance,
-      balanceAfter: user.balance, // ❗ not touching real balance
+      balanceAfter: user.balance, // 
       note,
     });
 

@@ -3,7 +3,6 @@ const dotenv = require("dotenv");
 const cors = require("cors");
 const connectDB = require("./config/db");
 
-const adminInvitesRoutes = require("./routes/adminInvites");
 const adminRoutes = require("./routes/adminRoutes");
 const authRoutes = require("./routes/authRoutes");
 const ordersRoutes = require("./routes/ordersRoutes");
@@ -31,7 +30,6 @@ async function startServer() {
   app.use(cors({ origin: true, credentials: true }));
   
   // ✅ Routes
-  app.use("/api/admin/invites", adminInvitesRoutes);
   app.use("/api/admin", adminRoutes);
   app.use("/api/auth", authRoutes);
 

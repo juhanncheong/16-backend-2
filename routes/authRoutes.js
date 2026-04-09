@@ -1,7 +1,6 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const User = require("../models/User");
-const InvitationCode = require("../models/InvitationCode");
 const WalletTransaction = require("../models/WalletTransaction");
 const mongoose = require("mongoose");
 const { getLedgerTotal } = require("../utils/balance");
@@ -10,38 +9,57 @@ const router = express.Router();
 const jwt = require("jsonwebtoken");
 const { protect } = require("../middleware/auth");
 
+const REFERRAL_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function generateReferralCode(length = 8) {
+  let code = "";
+  for (let i = 0; i < length; i++) {
+    const idx = Math.floor(Math.random() * REFERRAL_CHARS.length);
+    code += REFERRAL_CHARS[idx];
+  }
+  return code;
+}
+
+async function createUniqueReferralCode() {
+  let code;
+  let exists = true;
+
+  while (exists) {
+    code = generateReferralCode(8);
+    exists = await User.findOne({ referralCode: code }).lean();
+  }
+
+  return code;
+}
+
 // ✅ INVITE ONLY SIGNUP
 router.post("/signup", async (req, res) => {
   try {
-    const { phoneNumber, password, invitationCode } = req.body || {};
+    const { phoneNumber, password, referralCode } = req.body || {};
 
-    if (!phoneNumber || !password || !invitationCode) {
+    if (!phoneNumber || !password || !referralCode) {
       return res.status(400).json({
-        message: "phoneNumber, password, invitationCode are required",
+        message: "phoneNumber, password and referralCode are required",
       });
     }
 
     if (password.length < 6) {
-      return res.status(400).json({ message: "Password must be at least 6 characters" });
+      return res.status(400).json({
+        message: "Password must be at least 6 characters",
+      });
     }
 
     const cleanPhone = phoneNumber.trim();
+    const cleanReferralCode = String(referralCode).trim().toUpperCase();
 
     const existingUser = await User.findOne({ phoneNumber: cleanPhone });
     if (existingUser) {
       return res.status(409).json({ message: "Phone number already registered" });
     }
 
-    const invite = await InvitationCode.findOne({
-      code: invitationCode.trim().toUpperCase(),
-    });
-
-    if (!invite) {
-      return res.status(400).json({ message: "Invalid invitation code" });
-    }
-
-    if (invite.isUsed) {
-      return res.status(400).json({ message: "Invitation code already used" });
+    const referrer = await User.findOne({ referralCode: cleanReferralCode });
+    if (!referrer) {
+      return res.status(400).json({ message: "Invalid referral code" });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -51,22 +69,28 @@ router.post("/signup", async (req, res) => {
       req.socket?.remoteAddress ||
       req.ip;
 
+    const myReferralCode = await createUniqueReferralCode();
+
     const user = await User.create({
       phoneNumber: cleanPhone,
       password: hashedPassword,
       registeredIp: ip,
+      referralCode: myReferralCode,
+      referredBy: referrer._id,
+      referredByCode: referrer.referralCode,
     });
 
-    invite.isUsed = true;
-    invite.usedBy = user._id;
-    invite.usedAt = new Date();
-    await invite.save();
-
     return res.status(201).json({
-      message: "✅ Signup successful (invite accepted)",
+      message: "✅ Signup successful",
       user: {
         id: user._id,
         phoneNumber: user.phoneNumber,
+        referralCode: user.referralCode,
+        referredBy: {
+          id: referrer._id,
+          phoneNumber: referrer.phoneNumber,
+          referralCode: referrer.referralCode,
+        },
       },
     });
   } catch (err) {
@@ -127,7 +151,11 @@ router.post("/login", async (req, res) => {
 // ✅ ME
 router.get("/me", protect, async (req, res) => {
   try {
-    const user = await User.findById(req.user.userId).select("-password").lean();
+    const user = await User.findById(req.user.userId)
+      .select("-password")
+      .populate("referredBy", "phoneNumber referralCode")
+      .lean();
+
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const cleanBalance = Number(user.balance || 0);
@@ -136,7 +164,7 @@ router.get("/me", protect, async (req, res) => {
       user: {
         ...user,
         balance: cleanBalance,
-        availableBalance: cleanBalance, // keep for frontend
+        availableBalance: cleanBalance,
       },
     });
   } catch (err) {

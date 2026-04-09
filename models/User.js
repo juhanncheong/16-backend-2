@@ -28,6 +28,10 @@ const userSchema = new mongoose.Schema(
     withdrawPinLocked: { type: Boolean, default: false },
     withdrawPinLockedAt: { type: Date, default: null },
 
+    referralCode: { type: String, unique: true, sparse: true, uppercase: true, trim: true, index: true, }, 
+    referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null, },
+    referredByCode: { type: String, default: null, uppercase: true, trim: true, },
+    
     // (optional) for later admin logic
     role: { type: String, enum: ["user", "admin"], default: "user" },
   },
