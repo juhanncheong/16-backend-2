@@ -156,15 +156,54 @@ router.get("/me", protect, async (req, res) => {
       .populate("referredBy", "phoneNumber referralCode")
       .lean();
 
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
 
     const cleanBalance = Number(user.balance || 0);
+    const ledgerTotal = await getLedgerTotal(user._id);
+    const availableBalance = cleanBalance + Number(ledgerTotal || 0);
+
+    const creditAgg = await WalletTransaction.aggregate([
+      {
+        $match: {
+          userId: new mongoose.Types.ObjectId(user._id),
+          type: "TRIAL_CREDIT",
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$amount" },
+        },
+      },
+    ]);
+
+    const revAgg = await WalletTransaction.aggregate([
+      {
+        $match: {
+          userId: new mongoose.Types.ObjectId(user._id),
+          type: "TRIAL_REVERSAL",
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$amount" },
+        },
+      },
+    ]);
+
+    const credited = Number(creditAgg[0]?.total || 0);
+    const reversed = Math.abs(Number(revAgg[0]?.total || 0));
+    const trialBonusRemaining = Math.max(0, credited - reversed);
 
     return res.json({
       user: {
         ...user,
         balance: cleanBalance,
-        availableBalance: cleanBalance,
+        availableBalance,
+        trialBonusRemaining,
       },
     });
   } catch (err) {
