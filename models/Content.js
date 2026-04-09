@@ -3,7 +3,10 @@ const mongoose = require("mongoose");
 const contentSectionSchema = new mongoose.Schema(
   {
     heading: { type: String, trim: true, default: "" },
-    paragraphs: [{ type: String, trim: true }],
+    paragraphs: {
+      type: [String],
+      default: [],
+    },
   },
   { _id: false }
 );
@@ -31,6 +34,10 @@ const contentSchema = new mongoose.Schema(
       type: String,
       default: "v1.0",
       trim: true,
+    },
+    lastUpdated: {
+      type: Date,
+      default: null,
     },
     sections: {
       type: [contentSectionSchema],

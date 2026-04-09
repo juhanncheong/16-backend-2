@@ -28,7 +28,8 @@ router.get("/content/:key", async (req, res) => {
       title: content.title,
       summary: content.summary,
       version: content.version,
-      updatedAt: content.updatedAt,
+      updatedAt: content.lastUpdated || content.updatedAt,
+      lastUpdated: content.lastUpdated,
       sections: content.sections || [],
     });
   } catch (err) {
