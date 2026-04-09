@@ -61,12 +61,13 @@ router.get("/users", protect, async (req, res) => {
     const enrichedUsers = users.map((u) => {
       const pending = pendingMap.get(String(u._id)) || null;
 
-      const dbBalance = Number(u.balance || 0);
-      const availableBalance = dbBalance;
-      const displayBalance = dbBalance;
+      const cleanBalance = Number(u.balance || 0);
+      const availableBalance = cleanBalance;
+      const displayBalance = cleanBalance;
 
       return {
         ...u,
+        balance: cleanBalance,
         referralCount: referralCountMap.get(String(u._id)) || 0,
         currentPendingOrder: pending,
         availableBalance,
