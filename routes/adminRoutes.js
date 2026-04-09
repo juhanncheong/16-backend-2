@@ -892,16 +892,17 @@ router.get("/content/:key", protect, adminOnly, async (req, res) => {
         "platform-rules": "Platform Rules",
       };
 
-      content = await Content.create({
+      const created = await Content.create({
         key,
         title: defaultTitleMap[key] || "Content",
         summary: "",
         version: "v1.0",
+        lastUpdated: null,
         sections: [],
         isPublished: true,
       });
 
-      content = content.toObject();
+      content = created.toObject();
     }
 
     return res.json({
@@ -911,8 +912,9 @@ router.get("/content/:key", protect, adminOnly, async (req, res) => {
         title: content.title,
         summary: content.summary,
         version: content.version,
+        lastUpdated: content.lastUpdated || null,
         isPublished: content.isPublished,
-        updatedAt: content.updatedAt,
+        updatedAt: content.lastUpdated || content.updatedAt,
         sections: content.sections || [],
       },
     });
@@ -936,6 +938,7 @@ router.put("/content/:key", protect, adminOnly, async (req, res) => {
       title,
       summary,
       version,
+      lastUpdated,
       sections,
       isPublished,
     } = req.body || {};
@@ -945,6 +948,18 @@ router.put("/content/:key", protect, adminOnly, async (req, res) => {
         ok: false,
         message: "title is required",
       });
+    }
+
+    let parsedLastUpdated = null;
+    if (lastUpdated) {
+      const dt = new Date(lastUpdated);
+      if (Number.isNaN(dt.getTime())) {
+        return res.status(400).json({
+          ok: false,
+          message: "lastUpdated must be a valid date",
+        });
+      }
+      parsedLastUpdated = dt;
     }
 
     const cleanedSections = Array.isArray(sections)
@@ -965,6 +980,7 @@ router.put("/content/:key", protect, adminOnly, async (req, res) => {
         title: String(title).trim(),
         summary: String(summary || "").trim(),
         version: String(version || "v1.0").trim(),
+        lastUpdated: parsedLastUpdated,
         sections: cleanedSections,
         isPublished: typeof isPublished === "boolean" ? isPublished : true,
       },
@@ -983,8 +999,9 @@ router.put("/content/:key", protect, adminOnly, async (req, res) => {
         title: updated.title,
         summary: updated.summary,
         version: updated.version,
+        lastUpdated: updated.lastUpdated || null,
         isPublished: updated.isPublished,
-        updatedAt: updated.updatedAt,
+        updatedAt: updated.lastUpdated || updated.updatedAt,
         sections: updated.sections || [],
       },
     });
