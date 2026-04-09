@@ -18,7 +18,6 @@ const { adminListDeposits } = require("../controllers/adminDepositsController");
 const SigninClaim = require("../models/SigninClaim");
 const UserOrder = require("../models/UserOrder");
 const SigninRewardRule = require("../models/SigninRewardRule");
-const { getLedgerTotal } = require("../utils/balance");
 const Content = require("../models/Content");
 
 const router = express.Router();
@@ -59,29 +58,21 @@ router.get("/users", protect, async (req, res) => {
       }
     }
 
-    const enrichedUsers = await Promise.all(
-      users.map(async (u) => {
-        const pending = pendingMap.get(String(u._id)) || null;
+    const enrichedUsers = users.map((u) => {
+      const pending = pendingMap.get(String(u._id)) || null;
 
-        const dbBalance = Number(u.balance || 0);
-        let availableBalance = dbBalance;
-        let displayBalance = dbBalance;
+      const dbBalance = Number(u.balance || 0);
+      const availableBalance = dbBalance;
+      const displayBalance = dbBalance;
 
-        if (pending && pending.isBonus) {
-          const ledgerTotal = await getLedgerTotal(u._id);
-          availableBalance = dbBalance + Number(ledgerTotal || 0);
-          displayBalance = availableBalance - Number(pending.price || 0);
-        }
-
-        return {
-          ...u,
-          referralCount: referralCountMap.get(String(u._id)) || 0,
-          currentPendingOrder: pending,
-          availableBalance,
-          displayBalance,
-        };
-      })
-    );
+      return {
+        ...u,
+        referralCount: referralCountMap.get(String(u._id)) || 0,
+        currentPendingOrder: pending,
+        availableBalance,
+        displayBalance,
+      };
+    });
 
     return res.json({ ok: true, users: enrichedUsers });
   } catch (err) {
