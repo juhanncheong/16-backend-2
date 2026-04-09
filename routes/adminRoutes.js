@@ -63,7 +63,12 @@ router.get("/users", protect, async (req, res) => {
 
       const cleanBalance = Number(u.balance || 0);
       const availableBalance = cleanBalance;
-      const displayBalance = cleanBalance;
+
+      let displayBalance = cleanBalance;
+
+      if (pending && pending.isBonus) {
+        displayBalance = cleanBalance - Number(pending.price || 0);
+      }
 
       return {
         ...u,
