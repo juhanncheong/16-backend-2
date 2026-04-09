@@ -359,4 +359,59 @@ async function orderHistory(req, res) {
   }
 }
 
-module.exports = { searchFlights, submitOrder, orderHistory };
+async function currentOrder(req, res) {
+  try {
+    const userId = req.user.userId;
+
+    const user = await User.findById(userId).lean();
+    if (!user) {
+      return res.status(404).json({ ok: false, message: "User not found" });
+    }
+
+    const ledgerTotal = await getLedgerTotal(user._id);
+    const availableBalance = Number(user.balance || 0) + Number(ledgerTotal || 0);
+
+    const pending = await UserOrder.findOne({
+      user: userId,
+      status: "PENDING",
+    })
+      .populate("poolOrder", "imageUrl")
+      .lean();
+
+    if (!pending) {
+      return res.json({
+        ok: true,
+        pending: null,
+        availableBalance,
+      });
+    }
+
+    const stats = buildPendingStats(
+      pending.price,
+      pending.commission,
+      availableBalance,
+      pending.isBonus
+    );
+
+    return res.json({
+      ok: true,
+      pending: {
+        status: pending.status,
+        orderNumber: pending.orderNumber,
+        orderName: pending.orderName,
+        price: pending.price,
+        commission: pending.commission,
+        isBonus: pending.isBonus,
+        imageUrl: pending.poolOrder?.imageUrl || "",
+        availableBalance: stats.availableBalance,
+        shortBalance: stats.shortBalance,
+        pendingAmount: stats.pendingAmount,
+      },
+    });
+  } catch (err) {
+    console.error("currentOrder error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+}
+
+module.exports = { searchFlights, submitOrder, orderHistory, currentOrder };
