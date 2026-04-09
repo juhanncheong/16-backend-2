@@ -17,6 +17,7 @@ const mongoose = require("mongoose");
 const { adminListDeposits } = require("../controllers/adminDepositsController");
 const SigninClaim = require("../models/SigninClaim");
 const UserOrder = require("../models/UserOrder");
+const Order = require("../models/Order");
 const SigninRewardRule = require("../models/SigninRewardRule");
 
 const router = express.Router();
@@ -42,7 +43,7 @@ router.get("/users", protect, adminOnly, async (req, res) => {
     );
 
     // get current pending bonus orders for these users
-    const pendingOrders = await Order.find({
+    const pendingOrders = await UserOrder.find({
       user: { $in: userIds },
       status: "PENDING",
       isBonus: true,
