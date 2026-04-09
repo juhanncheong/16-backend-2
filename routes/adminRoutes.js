@@ -9,6 +9,7 @@ const {
 } = require("../controllers/adminOrdersController");
 
 const adminWithdrawalsController = require("../controllers/adminWithdrawalsController");
+const Withdrawal = require("../models/Withdrawal");
 const VipConfig = require("../models/VipConfig");
 
 const WalletTransaction = require("../models/WalletTransaction");
@@ -281,6 +282,68 @@ router.post("/users/:id/trial-revoke", protect, adminOnly, async (req, res) => {
   } catch (err) {
     console.error("admin trial-revoke error:", err);
     return res.status(500).json({ ok: false, message: "Server error" });
+  }
+});
+
+// ✅ Deposit withdrawal total per user
+router.get("/users/:id/wallet-summary", protect, adminOnly, async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    const user = await User.findById(userId).select("_id phoneNumber balance");
+    if (!user) {
+      return res.status(404).json({ ok: false, message: "User not found" });
+    }
+
+    const [depositAgg, withdrawalAgg] = await Promise.all([
+      WalletTransaction.aggregate([
+        {
+          $match: {
+            userId: new mongoose.Types.ObjectId(userId),
+            type: "DEPOSIT",
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalDeposit: { $sum: "$amount" },
+            depositCount: { $sum: 1 },
+          },
+        },
+      ]),
+      Withdrawal.aggregate([
+        {
+          $match: {
+            user: new mongoose.Types.ObjectId(userId),
+            status: "APPROVED",
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalWithdrawal: { $sum: "$amount" },
+            withdrawalCount: { $sum: 1 },
+          },
+        },
+      ]),
+    ]);
+
+    return res.json({
+      ok: true,
+      user: {
+        _id: user._id,
+        phoneNumber: user.phoneNumber,
+        balance: Number(user.balance || 0),
+      },
+      summary: {
+        totalDeposit: Number(depositAgg[0]?.totalDeposit || 0),
+        depositCount: Number(depositAgg[0]?.depositCount || 0),
+        totalWithdrawal: Number(withdrawalAgg[0]?.totalWithdrawal || 0),
+        withdrawalCount: Number(withdrawalAgg[0]?.withdrawalCount || 0),
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message });
   }
 });
 
