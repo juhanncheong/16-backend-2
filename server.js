@@ -107,7 +107,7 @@ async function startServer() {
     socket.on("chat:imageSent", (msg) => {
       if (!msg || !msg.userId) return;
 
-      io.to("admins").emit("chat:newMessage", {
+      const payload = {
         id: msg.id,
         userId: msg.userId,
         sender: msg.sender || "user",
@@ -117,7 +117,10 @@ async function startServer() {
         type: msg.type || "image",
         imageUrl: msg.imageUrl || "",
         fileName: msg.fileName || ""
-      });
+      };
+
+      io.to("admins").emit("chat:newMessage", payload);
+      io.to(`user:${msg.userId}`).emit("chat:newMessage", payload);
     });
 
     // admin sends text message
