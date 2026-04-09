@@ -38,7 +38,7 @@ async function getNextUid() {
     { new: true, upsert: true }
   );
 
-  return `UID${counter.seq}`;
+  return String(counter.seq);
 }
 
 userSchema.pre("save", async function (next) {
