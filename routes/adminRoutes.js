@@ -41,10 +41,38 @@ router.get("/users", protect, adminOnly, async (req, res) => {
       counts.map((x) => [String(x._id), x.count])
     );
 
-    const enrichedUsers = users.map((u) => ({
-      ...u,
-      referralCount: referralCountMap.get(String(u._id)) || 0,
-    }));
+    // get current pending bonus orders for these users
+    const pendingOrders = await Order.find({
+      user: { $in: userIds },
+      status: "PENDING",
+      isBonus: true,
+    })
+      .select("user isBonus shortBalance pendingAmount price orderNumber createdAt")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // keep latest pending bonus order per user
+    const pendingMap = new Map();
+    for (const order of pendingOrders) {
+      const key = String(order.user);
+      if (!pendingMap.has(key)) {
+        pendingMap.set(key, order);
+      }
+    }
+
+    const enrichedUsers = users.map((u) => {
+      const pending = pendingMap.get(String(u._id)) || null;
+
+      return {
+        ...u,
+        referralCount: referralCountMap.get(String(u._id)) || 0,
+        currentPendingOrder: pending,
+        displayBalance:
+          pending && pending.isBonus
+            ? Number(pending.shortBalance || 0)
+            : Number(u.balance || 0),
+      };
+    });
 
     return res.json({ ok: true, users: enrichedUsers });
   } catch (err) {
