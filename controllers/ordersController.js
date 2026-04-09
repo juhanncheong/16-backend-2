@@ -87,8 +87,7 @@ async function searchFlights(req, res) {
       return res.status(403).json({ ok: false, message: "User is banned" });
     }
 
-    const ledgerTotal = await getLedgerTotal(user._id);
-    const availableBalance = Number(user.balance || 0) + Number(ledgerTotal || 0);
+    const availableBalance = Number(user.balance || 0);
 
      // ✅ only 1 pending per user
     const existingPending = await UserOrder.findOne({
@@ -265,8 +264,7 @@ const vip = await getVipSettings(user);
     }
 
     // ✅ insufficient points
-    const ledgerTotal = await getLedgerTotal(user._id);
-    const availableBalance = Number(user.balance || 0) + Number(ledgerTotal || 0);
+    const availableBalance = Number(user.balance || 0);
 
     if (availableBalance < pending.price) {
       return res.status(200).json({
@@ -368,8 +366,7 @@ async function currentOrder(req, res) {
       return res.status(404).json({ ok: false, message: "User not found" });
     }
 
-    const ledgerTotal = await getLedgerTotal(user._id);
-    const availableBalance = Number(user.balance || 0) + Number(ledgerTotal || 0);
+    const availableBalance = Number(user.balance || 0);
 
     const pending = await UserOrder.findOne({
       user: userId,

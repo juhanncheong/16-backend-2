@@ -162,8 +162,7 @@ router.get("/me", protect, async (req, res) => {
     }
 
     const cleanBalance = Number(user.balance || 0);
-    const ledgerTotal = await getLedgerTotal(user._id);
-    const availableBalance = cleanBalance + Number(ledgerTotal || 0);
+    const availableBalance = cleanBalance;
 
     const creditAgg = await WalletTransaction.aggregate([
       {
