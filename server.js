@@ -104,6 +104,22 @@ async function startServer() {
       });
     });
 
+    socket.on("chat:imageSent", (msg) => {
+      if (!msg || !msg.userId) return;
+
+      io.to("admins").emit("chat:newMessage", {
+        id: msg.id,
+        userId: msg.userId,
+        sender: msg.sender || "user",
+        message: msg.message || "",
+        createdAt: msg.createdAt,
+        status: msg.status || "sent",
+        type: msg.type || "image",
+        imageUrl: msg.imageUrl || "",
+        fileName: msg.fileName || ""
+      });
+    });
+
     // admin sends text message
     socket.on("admin:message", ({ userId, message, clientId }) => {
       const msg = String(message || "").trim();
