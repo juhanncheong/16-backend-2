@@ -24,13 +24,12 @@ function addColumn(table, columnDef) {
   }
 }
 
-// old DB might not have createdAt
 addColumn("chat_messages", "createdAt TEXT");
-
-// optional: message status (sent/delivered/read)
 addColumn("chat_messages", "status TEXT");
+addColumn("chat_messages", "type TEXT DEFAULT 'text'");
+addColumn("chat_messages", "imageUrl TEXT");
+addColumn("chat_messages", "fileName TEXT");
 
-// ✅ 3) Admin-only nicknames table (admin notes)
 db.exec(`
 CREATE TABLE IF NOT EXISTS admin_notes (
   userId TEXT PRIMARY KEY,

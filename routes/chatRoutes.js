@@ -1,9 +1,41 @@
 const express = require("express");
 const router = express.Router();
 const chatDB = require("../chatDB");
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
 
 /**
- * ✅ One-time: create admin_notes table (nickname per user, admin-only)
+ * upload folder
+ */
+const uploadDir = path.join(__dirname, "../uploads/chat");
+fs.mkdirSync(uploadDir, { recursive: true });
+
+/**
+ * multer config
+ */
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname || "");
+    const safeExt = ext || ".jpg";
+    cb(null, `chat_${Date.now()}_${Math.random().toString(16).slice(2)}${safeExt}`);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype || !file.mimetype.startsWith("image/")) {
+      return cb(new Error("Only image files are allowed"));
+    }
+    cb(null, true);
+  }
+});
+
+/**
+ * one-time: create admin_notes table
  */
 chatDB
   .prepare(`
@@ -16,12 +48,10 @@ chatDB
   .run();
 
 /**
- * ✅ Helper: safe JSON response for conversations
- * Fixes: 500 crash if table missing / query fails
+ * helper
  */
 function safeGetConversations() {
   try {
-    // ✅ includes lastMessage preview + lastTime
     const rows = chatDB
       .prepare(`
         SELECT 
@@ -48,8 +78,7 @@ function safeGetConversations() {
 }
 
 /**
- * ✅ Admin: list all conversations (unique userId sorted by last message)
- * Returns: userId, lastTime, lastMessage
+ * admin: list conversations
  */
 router.get("/conversations", (req, res) => {
   try {
@@ -85,7 +114,7 @@ router.get("/conversations", (req, res) => {
 });
 
 /**
- * ✅ Admin: get messages for a user
+ * get messages for a user
  */
 router.get("/messages/:userId", (req, res) => {
   try {
@@ -93,7 +122,7 @@ router.get("/messages/:userId", (req, res) => {
 
     const rows = chatDB
       .prepare(`
-        SELECT id, sender, message, createdAt, status
+        SELECT id, sender, message, createdAt, status, type, imageUrl, fileName
         FROM chat_messages
         WHERE userId = ?
         ORDER BY id ASC
@@ -108,8 +137,66 @@ router.get("/messages/:userId", (req, res) => {
 });
 
 /**
- * ✅ Admin-only Nickname:
- * GET nickname for one user
+ * upload image message
+ * form-data:
+ * - image
+ * - userId
+ * - sender (optional, default user)
+ * - message (optional caption)
+ */
+router.post("/upload", upload.single("image"), (req, res) => {
+  try {
+    const userId = String(req.body.userId || "").trim();
+    const sender = String(req.body.sender || "user").trim();
+    const message = String(req.body.message || "").trim();
+
+    if (!userId) {
+      return res.status(400).json({ message: "userId is required" });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: "Image file is required" });
+    }
+
+    const createdAt = new Date().toISOString();
+    const imageUrl = `/uploads/chat/${req.file.filename}`;
+
+    const result = chatDB.prepare(`
+      INSERT INTO chat_messages (userId, sender, message, createdAt, type, imageUrl, fileName, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      userId,
+      sender,
+      message,
+      createdAt,
+      "image",
+      imageUrl,
+      req.file.originalname || "",
+      "sent"
+    );
+
+    return res.json({
+      success: true,
+      messageData: {
+        id: result.lastInsertRowid,
+        userId,
+        sender,
+        message,
+        createdAt,
+        status: "sent",
+        type: "image",
+        imageUrl,
+        fileName: req.file.originalname || ""
+      }
+    });
+  } catch (err) {
+    console.error("chat upload error:", err);
+    res.status(500).json({ message: err.message || "Upload failed" });
+  }
+});
+
+/**
+ * admin-only nickname get
  */
 router.get("/admin-nickname/:userId", (req, res) => {
   try {
@@ -127,9 +214,7 @@ router.get("/admin-nickname/:userId", (req, res) => {
 });
 
 /**
- * ✅ Admin-only Nickname:
- * PATCH nickname for one user
- * body: { nickname: "John Buyer" }
+ * admin-only nickname patch
  */
 router.patch("/admin-nickname/:userId", (req, res) => {
   try {
