@@ -13,6 +13,7 @@ const signinRoutes = require("./routes/signinRoutes");
 const chatRoutes = require("./routes/chatRoutes");
 const eventRoutes = require("./routes/eventRoutes");
 const vipRoutes = require("./routes/vipRoutes");
+const contentRoutes = require("./routes/contentRoutes");
 
 const http = require("http");
 const { Server } = require("socket.io");
@@ -41,7 +42,8 @@ async function startServer() {
   app.use("/api/chat", chatRoutes);
   app.use("/api", eventRoutes);
   app.use("/api", vipRoutes);
-
+  app.use("/api", contentRoutes);
+  
   const server = http.createServer(app);
 
 const io = new Server(server, {

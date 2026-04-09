@@ -19,6 +19,7 @@ const SigninClaim = require("../models/SigninClaim");
 const UserOrder = require("../models/UserOrder");
 const SigninRewardRule = require("../models/SigninRewardRule");
 const { getLedgerTotal } = require("../utils/balance");
+const Content = require("../models/Content");
 
 const router = express.Router();
 
@@ -862,6 +863,134 @@ router.patch("/users/:id/vip-rank", protect, adminOnly, async (req, res) => {
     return res.json({ ok: true, message: "✅ VIP rank updated", user });
   } catch (err) {
     return res.status(500).json({ ok: false, message: err.message });
+  }
+});
+
+/**
+ * ============================
+ * ✅ CONTENT MANAGEMENT
+ * ============================
+ */
+
+// GET /api/admin/content/:key
+router.get("/content/:key", protect, adminOnly, async (req, res) => {
+  try {
+    const key = String(req.params.key || "").trim().toLowerCase();
+
+    const allowedKeys = ["terms", "privacy-security", "platform-rules"];
+    if (!allowedKeys.includes(key)) {
+      return res.status(404).json({ ok: false, message: "Content not found" });
+    }
+
+    let content = await Content.findOne({ key }).lean();
+
+    // optional auto-create empty doc
+    if (!content) {
+      const defaultTitleMap = {
+        terms: "Terms & Conditions",
+        "privacy-security": "Privacy & Security",
+        "platform-rules": "Platform Rules",
+      };
+
+      content = await Content.create({
+        key,
+        title: defaultTitleMap[key] || "Content",
+        summary: "",
+        version: "v1.0",
+        sections: [],
+        isPublished: true,
+      });
+
+      content = content.toObject();
+    }
+
+    return res.json({
+      ok: true,
+      content: {
+        key: content.key,
+        title: content.title,
+        summary: content.summary,
+        version: content.version,
+        isPublished: content.isPublished,
+        updatedAt: content.updatedAt,
+        sections: content.sections || [],
+      },
+    });
+  } catch (err) {
+    console.error("Admin get content error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+});
+
+// PUT /api/admin/content/:key
+router.put("/content/:key", protect, adminOnly, async (req, res) => {
+  try {
+    const key = String(req.params.key || "").trim().toLowerCase();
+
+    const allowedKeys = ["terms", "privacy-security", "platform-rules"];
+    if (!allowedKeys.includes(key)) {
+      return res.status(404).json({ ok: false, message: "Content not found" });
+    }
+
+    const {
+      title,
+      summary,
+      version,
+      sections,
+      isPublished,
+    } = req.body || {};
+
+    if (!title || !String(title).trim()) {
+      return res.status(400).json({
+        ok: false,
+        message: "title is required",
+      });
+    }
+
+    const cleanedSections = Array.isArray(sections)
+      ? sections.map((section) => ({
+          heading: String(section?.heading || "").trim(),
+          paragraphs: Array.isArray(section?.paragraphs)
+            ? section.paragraphs
+                .map((p) => String(p || "").trim())
+                .filter(Boolean)
+            : [],
+        }))
+      : [];
+
+    const updated = await Content.findOneAndUpdate(
+      { key },
+      {
+        key,
+        title: String(title).trim(),
+        summary: String(summary || "").trim(),
+        version: String(version || "v1.0").trim(),
+        sections: cleanedSections,
+        isPublished: typeof isPublished === "boolean" ? isPublished : true,
+      },
+      {
+        new: true,
+        upsert: true,
+        setDefaultsOnInsert: true,
+      }
+    ).lean();
+
+    return res.json({
+      ok: true,
+      message: "✅ Content updated",
+      content: {
+        key: updated.key,
+        title: updated.title,
+        summary: updated.summary,
+        version: updated.version,
+        isPublished: updated.isPublished,
+        updatedAt: updated.updatedAt,
+        sections: updated.sections || [],
+      },
+    });
+  } catch (err) {
+    console.error("Admin update content error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
   }
 });
 
