@@ -66,24 +66,28 @@ async function togglePoolOrder(req, res) {
  */
 async function createBonusRule(req, res) {
   try {
-    const { userId, triggerCount, poolOrderId } = req.body;
+    const { uid, triggerCount, poolOrderId } = req.body;
 
-    if (!userId || !triggerCount || !poolOrderId) {
+    if (!uid || !triggerCount || !poolOrderId) {
       return res.status(400).json({
         ok: false,
-        message: "userId, triggerCount, poolOrderId are required",
+        message: "uid, triggerCount, poolOrderId are required",
       });
     }
 
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ ok: false, message: "User not found" });
+    const cleanUid = String(uid).trim();
+
+    const user = await User.findOne({ uid: cleanUid });
+    if (!user) {
+      return res.status(404).json({ ok: false, message: "User not found" });
+    }
 
     const poolOrder = await OrderPool.findById(poolOrderId);
     if (!poolOrder) return res.status(404).json({ ok: false, message: "Pool order not found" });
 
     // ✅ Upsert bonus rule for this specific user + triggerCount
     const updated = await BonusRule.findOneAndUpdate(
-      { user: userId, triggerCount: Number(triggerCount) },
+      { user: user._id, triggerCount: Number(triggerCount) },
       {
         $set: {
           poolOrder: poolOrder._id,
@@ -105,8 +109,12 @@ async function listUserBonusRules(req, res) {
   try {
     const { userId } = req.params;
 
-    // 1) Load bonus rules
-    const rules = await BonusRule.find({ user: userId })
+    const user = await User.findOne({ uid: String(userId).trim() }).select("_id uid");
+    if (!user) {
+      return res.status(404).json({ ok: false, message: "User not found" });
+    }
+
+    const rules = await BonusRule.find({ user: user._id })
       .populate("poolOrder")
       .sort({ triggerCount: 1 })
       .lean();
@@ -120,7 +128,7 @@ async function listUserBonusRules(req, res) {
     let userOrders = [];
     if (poolOrderIds.length) {
       userOrders = await UserOrder.find({
-        user: userId,
+        user: user._id,
         isBonus: true,
         poolOrder: { $in: poolOrderIds },
       })
