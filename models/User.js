@@ -32,14 +32,14 @@ const userSchema = new mongoose.Schema(
 );
 
 async function getNextUid() {
-  const counter = await Counter.findOneAndUpdate(
-    { name: "userUid" },
-    {
-      $setOnInsert: { name: "userUid", seq: 100000 },
-      $inc: { seq: 1 }
-    },
-    { new: true, upsert: true }
-  );
+  let counter = await Counter.findOne({ name: "userUid" });
+
+  if (!counter) {
+    counter = await Counter.create({ name: "userUid", seq: 100000 });
+  }
+
+  counter.seq += 1;
+  await counter.save();
 
   return String(counter.seq);
 }
