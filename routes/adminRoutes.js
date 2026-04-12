@@ -22,6 +22,96 @@ const Content = require("../models/Content");
 
 const router = express.Router();
 
+const REFERRAL_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function generateReferralCode(length = 8) {
+  let code = "";
+  for (let i = 0; i < length; i++) {
+    const idx = Math.floor(Math.random() * REFERRAL_CHARS.length);
+    code += REFERRAL_CHARS[idx];
+  }
+  return code;
+}
+
+async function createUniqueReferralCode() {
+  let code;
+  let exists = true;
+
+  while (exists) {
+    code = generateReferralCode(8);
+    exists = await User.findOne({ referralCode: code }).lean();
+  }
+
+  return code;
+}
+
+// ✅ Admin manually create user (no invitation code required)
+router.post("/users", protect, adminOnly, async (req, res) => {
+  try {
+    const { phoneNumber, password, role } = req.body || {};
+
+    if (!phoneNumber || !password) {
+      return res.status(400).json({
+        ok: false,
+        message: "phoneNumber and password are required",
+      });
+    }
+
+    const cleanPhone = String(phoneNumber).trim();
+
+    if (cleanPhone.length < 3) {
+      return res.status(400).json({
+        ok: false,
+        message: "Invalid phone number",
+      });
+    }
+
+    if (String(password).length < 6) {
+      return res.status(400).json({
+        ok: false,
+        message: "Password must be at least 6 characters",
+      });
+    }
+
+    const exists = await User.findOne({ phoneNumber: cleanPhone }).lean();
+    if (exists) {
+      return res.status(409).json({
+        ok: false,
+        message: "Phone number already registered",
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(String(password), 10);
+    const referralCode = await createUniqueReferralCode();
+
+    const user = await User.create({
+      phoneNumber: cleanPhone,
+      password: hashedPassword,
+      referralCode,
+      referredBy: null,
+      referredByCode: null,
+      role: role === "admin" ? "admin" : "user",
+      registeredIp: "ADMIN_CREATED",
+    });
+
+    const safeUser = await User.findById(user._id)
+      .select("-password")
+      .lean();
+
+    return res.status(201).json({
+      ok: true,
+      message: "✅ User created successfully",
+      user: safeUser,
+    });
+  } catch (err) {
+    console.error("admin create user error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
 // ✅ Get all users
 router.get("/users", protect, async (req, res) => {
   try {
