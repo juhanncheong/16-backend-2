@@ -60,6 +60,7 @@ async function getVipSettings(user) {
   // auto create default config if missing
   if (!config) {
     config = await VipConfig.create({
+      bonusCommissionRate: 0.1,
       ranks: [
         { rank: 1, ordersLimit: 40, commissionRate: 0.01 },
         { rank: 2, ordersLimit: 60, commissionRate: 0.015 },
@@ -71,7 +72,10 @@ async function getVipSettings(user) {
   const rank = Number(user.vipRank || 1);
   const vip = config.ranks.find((r) => r.rank === rank) || config.ranks[0];
 
-  return vip; // { rank, ordersLimit, commissionRate }
+  return {
+    ...vip,
+    bonusCommissionRate: Number(config.bonusCommissionRate ?? 0.1),
+  };
 }
 
 async function searchFlights(req, res) {
@@ -194,7 +198,7 @@ selected = candidates[Math.floor(Math.random() * candidates.length)] || null;
   }
 }
 
-    const rateToUse = isBonus ? 0.1 : vip.commissionRate; 
+    const rateToUse = isBonus ? vip.bonusCommissionRate : vip.commissionRate;
     const commission = calcCommission(selected.price, rateToUse);
 
     const created = await UserOrder.create({

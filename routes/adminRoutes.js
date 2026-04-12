@@ -800,7 +800,15 @@ router.get("/vip/config", protect, adminOnly, async (req, res) => {
 
 router.put("/vip/config", protect, adminOnly, async (req, res) => {
   try {
-    const { ranks } = req.body;
+    const { ranks, bonusCommissionRate } = req.body;
+
+    const cleanBonusCommissionRate = Number(bonusCommissionRate);
+    if (!Number.isFinite(cleanBonusCommissionRate) || cleanBonusCommissionRate < 0) {
+      return res.status(400).json({
+        ok: false,
+        message: "Invalid bonusCommissionRate",
+      });
+    }
 
     if (!Array.isArray(ranks) || ranks.length !== 3) {
       return res.status(400).json({
@@ -823,8 +831,13 @@ router.put("/vip/config", protect, adminOnly, async (req, res) => {
     });
 
     let config = await VipConfig.findOne();
-    if (!config) config = await VipConfig.create({ ranks: cleaned });
-    else {
+    if (!config) {
+      config = await VipConfig.create({
+        bonusCommissionRate: cleanBonusCommissionRate,
+        ranks: cleaned,
+      });
+    } else {
+      config.bonusCommissionRate = cleanBonusCommissionRate;
       config.ranks = cleaned;
       await config.save();
     }

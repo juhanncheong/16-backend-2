@@ -11,6 +11,8 @@ const vipRankSchema = new mongoose.Schema(
 
 const vipConfigSchema = new mongoose.Schema(
   {
+    bonusCommissionRate: { type: Number, default: 0.1 },
+
     ranks: {
       type: [vipRankSchema],
       default: [
