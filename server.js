@@ -16,6 +16,8 @@ const chatRoutes = require("./routes/chatRoutes");
 const eventRoutes = require("./routes/eventRoutes");
 const vipRoutes = require("./routes/vipRoutes");
 const contentRoutes = require("./routes/contentRoutes");
+const adminLuckyDrawRoutes = require("./routes/adminLuckyDrawRoutes");
+const userLuckyDrawRoutes = require("./routes/userLuckyDrawRoutes");
 
 const http = require("http");
 const { Server } = require("socket.io");
@@ -51,7 +53,9 @@ async function startServer() {
   app.use("/api", eventRoutes);
   app.use("/api", vipRoutes);
   app.use("/api", contentRoutes);
-
+  app.use("/api/admin/lucky-draw", adminLuckyDrawRoutes);
+  app.use("/api/lucky-draw", userLuckyDrawRoutes);
+  
   const server = http.createServer(app);
 
   const io = new Server(server, {
