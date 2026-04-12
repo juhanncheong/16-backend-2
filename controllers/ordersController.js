@@ -6,6 +6,7 @@ const UserOrder = require("../models/UserOrder");
 const VipConfig = require("../models/VipConfig");
 const { getLedgerTotal } = require("../utils/balance");
 const WalletTransaction = require("../models/WalletTransaction");
+const LuckyDrawRule = require("../models/LuckyDrawRule");
 
 let ACTIVE_POOL_CACHE = [];
 let LAST_POOL_REFRESH = 0;
@@ -139,7 +140,28 @@ async function searchFlights(req, res) {
     const safeCompleted = Number.isFinite(completedCount) ? completedCount : 0;
     const nextCount = safeCompleted + 1;
 
-    
+    // ✅ lucky draw trigger check BEFORE bonus rule / normal order creation
+    const luckyDrawRule = await LuckyDrawRule.findOne({
+      user: userId,
+      triggerCount: nextCount,
+      isActive: true,
+      claimedAt: null,
+    }).lean();
+
+    if (luckyDrawRule) {
+      return res.json({
+        ok: true,
+        showLuckyDraw: true,
+        luckyDraw: {
+          ruleId: luckyDrawRule._id,
+          triggerCount: luckyDrawRule.triggerCount,
+          title: luckyDrawRule.title || "Lucky Draw",
+          description:
+            luckyDrawRule.description || "Pick 1 egg and win your reward",
+        },
+      });
+    }
+
     // ✅ bonus trigger priority
     const bonusRule = await BonusRule.findOne({
      user: userId,
