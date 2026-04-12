@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const Withdrawal = require("../models/Withdrawal");
 const User = require("../models/User");
+const RecentWithdrawalAddress = require("../models/RecentWithdrawalAddress");
 
 const MAX_PIN_ATTEMPTS = 3;
 
@@ -291,6 +292,13 @@ exports.createWithdrawal = async (req, res) => {
       { session }
     );
 
+    await saveRecentWithdrawalAddress({
+      userId: user._id,
+      cryptoType,
+      address,
+      session,
+    });
+
     await session.commitTransaction();
     session.endSession();
 
@@ -324,6 +332,57 @@ exports.getMyWithdrawals = async (req, res) => {
     return res.status(500).json({
       ok: false,
       message: "Failed to fetch withdrawals",
+    });
+  }
+};
+
+async function saveRecentWithdrawalAddress({ userId, cryptoType, address, session }) {
+  const cleanAddress = String(address || "").trim();
+  if (!cleanAddress) return;
+
+  await RecentWithdrawalAddress.findOneAndUpdate(
+    {
+      user: userId,
+      cryptoType,
+      address: cleanAddress,
+    },
+    {
+      $set: {
+        lastUsedAt: new Date(),
+      },
+    },
+    {
+      upsert: true,
+      new: true,
+      setDefaultsOnInsert: true,
+      session,
+    }
+  );
+}
+
+exports.getRecentWithdrawalAddresses = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { cryptoType } = req.query;
+
+    const filter = { user: userId };
+    if (cryptoType) {
+      filter.cryptoType = String(cryptoType).trim();
+    }
+
+    const items = await RecentWithdrawalAddress.find(filter)
+      .sort({ lastUsedAt: -1 })
+      .limit(5)
+      .lean();
+
+    return res.json({
+      ok: true,
+      items,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to fetch recent withdrawal addresses",
     });
   }
 };

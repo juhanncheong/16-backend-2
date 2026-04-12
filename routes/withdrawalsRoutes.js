@@ -5,6 +5,7 @@ const { protect } = require("../middleware/auth");
 const {
   createWithdrawal,
   getMyWithdrawals,
+  getRecentWithdrawalAddresses,
   setWithdrawalPin,
   changeWithdrawalPin,
 } = require("../controllers/withdrawalsController");
@@ -14,5 +15,6 @@ router.post("/change-pin", protect, changeWithdrawalPin);
 
 router.post("/", protect, createWithdrawal);
 router.get("/me", protect, getMyWithdrawals);
+router.get("/recent-addresses", protect, getRecentWithdrawalAddresses);
 
 module.exports = router;
