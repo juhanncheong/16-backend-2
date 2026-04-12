@@ -1,6 +1,5 @@
-// adminDepositsController.js
 const mongoose = require("mongoose");
-const WalletTransaction = require("../models/WalletTransaction"); // <-- adjust path if needed
+const WalletTransaction = require("../models/WalletTransaction");
 
 function isValidObjectId(v) {
   return mongoose.Types.ObjectId.isValid(v);
@@ -15,36 +14,45 @@ function startOfToday() {
 exports.adminListDeposits = async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page || "1", 10));
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "10", 10)));
-    const skip = (page - 1) * limit;
 
-    // Your UI might pass `q` or `userId`
+    const rawLimit = String(req.query.limit || "10").trim().toLowerCase();
+    const noLimit = rawLimit === "all";
+
+    let limit = 10;
+    if (!noLimit) {
+      limit = Math.max(1, parseInt(rawLimit || "10", 10));
+      if (!Number.isFinite(limit)) limit = 10;
+    }
+
+    const skip = noLimit ? 0 : (page - 1) * limit;
+
     const q = String(req.query.q || "").trim();
     const userId = String(req.query.userId || "").trim();
     const pickedUser = userId || q;
 
-    // TABLE: show both DEPOSIT and ADMIN_ADJUST
     const listFilter = { type: { $in: ["DEPOSIT", "ADMIN_ADJUST"] } };
-
-    // STATS: deposits only
     const statsFilter = { type: "DEPOSIT" };
 
     if (pickedUser && isValidObjectId(pickedUser)) {
-      listFilter.userId = new mongoose.Types.ObjectId(pickedUser);
-      statsFilter.userId = new mongoose.Types.ObjectId(pickedUser);
+      const oid = new mongoose.Types.ObjectId(pickedUser);
+      listFilter.userId = oid;
+      statsFilter.userId = oid;
+    }
+
+    const rowsQuery = WalletTransaction.find(listFilter)
+      .sort({ createdAt: -1 })
+      .populate("userId", "uid phoneNumber")
+      .lean();
+
+    if (!noLimit) {
+      rowsQuery.skip(skip).limit(limit);
     }
 
     const [rows, totalRows] = await Promise.all([
-      WalletTransaction.find(listFilter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .populate("userId", "uid phoneNumber")
-        .lean(),
+      rowsQuery,
       WalletTransaction.countDocuments(listFilter),
     ]);
 
-    // ---- STATS (DEPOSIT only) ----
     const today = startOfToday();
 
     const [depositTotalsAgg, todayTotalsAgg] = await Promise.all([
@@ -76,21 +84,22 @@ exports.adminListDeposits = async (req, res) => {
     const todayDeposits = todayTotalsAgg[0]?.count || 0;
     const todayDepositAmount = Number(todayTotalsAgg[0]?.amount || 0);
 
-    const totalPages = Math.max(1, Math.ceil(totalRows / limit));
+    const totalPages = noLimit ? 1 : Math.max(1, Math.ceil(totalRows / limit));
 
     return res.json({
-      deposits: rows, // includes DEPOSIT + ADMIN_ADJUST
+      deposits: rows,
       pagination: {
-        page,
-        limit,
-        total: totalRows, // count of rows shown (both types)
+        page: noLimit ? 1 : page,
+        limit: noLimit ? totalRows : limit,
+        total: totalRows,
         totalPages,
+        noLimit,
       },
       stats: {
-        totalDeposits, // DEPOSIT only
-        totalDepositAmount, // DEPOSIT only
-        todayDeposits, // DEPOSIT only
-        todayDepositAmount, // DEPOSIT only
+        totalDeposits,
+        totalDepositAmount,
+        todayDeposits,
+        todayDepositAmount,
       },
     });
   } catch (err) {
