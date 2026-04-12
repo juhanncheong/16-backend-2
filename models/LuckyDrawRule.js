@@ -70,25 +70,19 @@ const luckyDrawRuleSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-luckyDrawRuleSchema.pre("validate", function (next) {
-  try {
-    if (this.rewardType === "cash") {
-      if (!Number.isFinite(Number(this.cashAmount)) || Number(this.cashAmount) <= 0) {
-        return next(new Error("Cash reward must have cashAmount > 0"));
-      }
-      this.poolOrder = null;
+luckyDrawRuleSchema.pre("validate", function () {
+  if (this.rewardType === "cash") {
+    if (!Number.isFinite(Number(this.cashAmount)) || Number(this.cashAmount) <= 0) {
+      throw new Error("Cash reward must have cashAmount > 0");
     }
+    this.poolOrder = null;
+  }
 
-    if (this.rewardType === "bonus_order") {
-      if (!this.poolOrder) {
-        return next(new Error("Bonus order reward must include poolOrder"));
-      }
-      this.cashAmount = 0;
+  if (this.rewardType === "bonus_order") {
+    if (!this.poolOrder) {
+      throw new Error("Bonus order reward must include poolOrder");
     }
-
-    next();
-  } catch (err) {
-    next(err);
+    this.cashAmount = 0;
   }
 });
 
