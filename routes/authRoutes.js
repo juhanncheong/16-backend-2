@@ -149,7 +149,7 @@ router.post("/login", async (req, res) => {
   }
 });
 
-// ✅ ME
+// ✅ me
 router.get("/me", protect, async (req, res) => {
   try {
     const user = await User.findById(req.user.userId)
@@ -160,6 +160,14 @@ router.get("/me", protect, async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
+
+    let config = await VipConfig.findOne().lean();
+    if (!config) config = await VipConfig.create({});
+
+    const ranks = Array.isArray(config.ranks) ? config.ranks : [];
+    const vipRank = Number(user.vipRank || 1);
+    const vip = ranks.find((r) => Number(r.rank) === vipRank) || ranks[0];
+    const derivedOrdersLimit = Number(vip?.ordersLimit || user.ordersLimit || 40);
 
     const cleanBalance = Number(user.balance || 0);
     const availableBalance = cleanBalance;
@@ -227,6 +235,7 @@ router.get("/me", protect, async (req, res) => {
     return res.json({
       user: {
         ...user,
+        ordersLimit: derivedOrdersLimit,
         balance: cleanBalance,
         availableBalance,
         trialBonusRemaining,

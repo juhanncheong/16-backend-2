@@ -121,6 +121,11 @@ router.get("/users", protect, async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
+    let config = await VipConfig.findOne().lean();
+    if (!config) config = await VipConfig.create({});
+
+    const ranks = Array.isArray(config.ranks) ? config.ranks : [];
+
     const userIds = users.map((u) => u._id);
 
     const counts = await User.aggregate([
@@ -155,13 +160,17 @@ router.get("/users", protect, async (req, res) => {
       const availableBalance = cleanBalance;
 
       let displayBalance = cleanBalance;
-
       if (pending && pending.isBonus) {
         displayBalance = cleanBalance - Number(pending.price || 0);
       }
 
+      const vipRank = Number(u.vipRank || 1);
+      const vip = ranks.find((r) => Number(r.rank) === vipRank) || ranks[0];
+      const derivedOrdersLimit = Number(vip?.ordersLimit || u.ordersLimit || 40);
+
       return {
         ...u,
+        ordersLimit: derivedOrdersLimit,
         balance: cleanBalance,
         referralCount: referralCountMap.get(String(u._id)) || 0,
         currentPendingOrder: pending,
