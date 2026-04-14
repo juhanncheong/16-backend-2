@@ -164,6 +164,20 @@ exports.createWithdrawal = async (req, res) => {
 
     if (!user) throw new Error("User not found");
 
+    if (user.withdrawalBlocked) {
+      await session.abortTransaction();
+      session.endSession();
+
+      return res.status(403).json({
+        ok: false,
+        code: "WITHDRAWAL_BLOCKED",
+        message: "Withdrawal currently frozen.",
+        withdrawalBlocked: true,
+        reason: user.withdrawalBlockedReason || "",
+        blockedAt: user.withdrawalBlockedAt || null,
+      });
+    }
+
     // ✅ Orders check (must complete 40 before withdraw)
     const completed = Number(user.ordersCompleted || 0);
     const required = Number(user.ordersLimit || 40);

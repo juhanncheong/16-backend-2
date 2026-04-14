@@ -241,6 +241,9 @@ router.get("/me", protect, async (req, res) => {
         availableBalance,
         trialBonusRemaining,
         dailyCommission,
+        withdrawalBlocked: Boolean(user.withdrawalBlocked),
+        withdrawalBlockedReason: user.withdrawalBlockedReason || "",
+        withdrawalBlockedAt: user.withdrawalBlockedAt || null,
       },
     });
   } catch (err) {

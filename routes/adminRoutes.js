@@ -555,6 +555,35 @@ router.delete("/users/:id", protect, adminOnly, async (req, res) => {
   }
 });
 
+router.patch("/users/:id/withdrawal-block", protect, adminOnly, async (req, res) => {
+  try {
+    const { blocked, reason } = req.body;
+
+    const user = await User.findById(req.params.id).select("-password");
+    if (!user) {
+      return res.status(404).json({ ok: false, message: "User not found" });
+    }
+
+    user.withdrawalBlocked = Boolean(blocked);
+    user.withdrawalBlockedAt = blocked ? new Date() : null;
+    user.withdrawalBlockedReason = blocked ? String(reason || "").trim() : "";
+    user.withdrawalBlockedBy = blocked ? req.user.userId : null;
+
+    await user.save();
+
+    return res.json({
+      ok: true,
+      message: blocked
+        ? "✅ Withdrawal blocked successfully"
+        : "✅ Withdrawal unblocked successfully",
+      user,
+    });
+  } catch (err) {
+    console.error("admin withdrawal-block error:", err);
+    return res.status(500).json({ ok: false, message: err.message || "Server error" });
+  }
+});
+
 // Ban or unban user
 router.patch("/users/:id/ban", protect, adminOnly, async (req, res) => {
   try {
