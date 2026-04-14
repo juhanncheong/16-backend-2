@@ -7,6 +7,7 @@ const VipConfig = require("../models/VipConfig");
 const { getLedgerTotal } = require("../utils/balance");
 const WalletTransaction = require("../models/WalletTransaction");
 const LuckyDrawRule = require("../models/LuckyDrawRule");
+const OrderImageMap = require("../models/OrderImageMap");
 
 let ACTIVE_POOL_CACHE = [];
 let LAST_POOL_REFRESH = 0;
@@ -43,7 +44,7 @@ async function refreshOrderPoolCache(force = false) {
   if (!force && now - LAST_POOL_REFRESH < 5000) return; // refresh max once per 5s
 
   ACTIVE_POOL_CACHE = await OrderPool.find({ isActive: true })
-    .select("_id orderNumber orderName price imageUrl isActive")
+    .select("_id orderNumber orderName price imageUrl imageKey isActive")
     .lean();
 
   LAST_POOL_REFRESH = now;
@@ -106,9 +107,19 @@ async function getVipSettings(user) {
   };
 }
 
+async function resolveOrderImage(order) {
+  if (!order) return "";
+
+  const key = String(order.imageKey || "").trim().toLowerCase();
+  if (!key) return order.imageUrl || "";
+
+  const map = await OrderImageMap.findOne({ key, isActive: true }).lean();
+  return map?.imageUrl || order.imageUrl || "";
+}
+
 async function searchFlights(req, res) {
   try {
-    const userId = req.user.userId; // ✅ from protect()
+    const userId = req.user.userId;
 
     const user = await User.findById(userId).lean();
     if (!user) return res.status(404).json({ ok: false, message: "User not found" });
@@ -123,15 +134,16 @@ async function searchFlights(req, res) {
     const trialBonusRemaining = await getTrialBonusRemaining(userId);
     const availableBalance = realBalance + trialBonusRemaining;
 
-     // ✅ only 1 pending per user
     const existingPending = await UserOrder.findOne({
       user: userId,
       status: "PENDING",
     })
-      .populate("poolOrder", "imageUrl")
+      .populate("poolOrder", "imageUrl imageKey")
       .lean();
 
     if (existingPending) {
+      const pendingImageUrl = await resolveOrderImage(existingPending.poolOrder);
+
       const stats = buildPendingStats(
         existingPending.price,
         existingPending.commission,
@@ -147,14 +159,13 @@ async function searchFlights(req, res) {
         price: existingPending.price,
         commission: existingPending.commission,
         isBonus: existingPending.isBonus,
-        imageUrl: existingPending.poolOrder?.imageUrl || "",
+        imageUrl: pendingImageUrl,
         availableBalance: stats.availableBalance,
         shortBalance: stats.shortBalance,
         pendingAmount: stats.pendingAmount,
       });
     }
 
-    // ✅ hard cap AFTER pending check
     if (user.ordersCompleted >= vip.ordersLimit) {
       return res.status(403).json({
         ok: false,
@@ -169,7 +180,6 @@ async function searchFlights(req, res) {
     const safeCompleted = Number.isFinite(completedCount) ? completedCount : 0;
     const nextCount = safeCompleted + 1;
 
-    // ✅ lucky draw trigger check BEFORE bonus rule / normal order creation
     const luckyDrawRule = await LuckyDrawRule.findOne({
       user: userId,
       triggerCount: nextCount,
@@ -191,14 +201,13 @@ async function searchFlights(req, res) {
       });
     }
 
-    // ✅ bonus trigger priority
     const bonusRule = await BonusRule.findOne({
-     user: userId,
-     triggerCount: nextCount,
-     isActive: true,
-   })
-  .populate("poolOrder")
-  .lean();
+      user: userId,
+      triggerCount: nextCount,
+      isActive: true,
+    })
+      .populate("poolOrder")
+      .lean();
 
     let selected = null;
     let isBonus = false;
@@ -220,34 +229,33 @@ async function searchFlights(req, res) {
 
       await refreshOrderPoolCache();
 
-const candidates1 = ACTIVE_POOL_CACHE.filter(
-  (o) => o.price >= min1 && o.price <= max1
-);
+      const candidates1 = ACTIVE_POOL_CACHE.filter(
+        (o) => o.price >= min1 && o.price <= max1
+      );
 
-const candidates2 = ACTIVE_POOL_CACHE.filter(
-  (o) => o.price >= min2 && o.price <= max2
-);
+      const candidates2 = ACTIVE_POOL_CACHE.filter(
+        (o) => o.price >= min2 && o.price <= max2
+      );
 
-const candidates3 = ACTIVE_POOL_CACHE.filter(
-  (o) => o.price >= min3 && o.price <= max3
-);
+      const candidates3 = ACTIVE_POOL_CACHE.filter(
+        (o) => o.price >= min3 && o.price <= max3
+      );
 
-const candidates = candidates1.length
-  ? candidates1
-  : candidates2.length
-  ? candidates2
-  : candidates3;
+      const candidates = candidates1.length
+        ? candidates1
+        : candidates2.length
+        ? candidates2
+        : candidates3;
 
-selected = candidates[Math.floor(Math.random() * candidates.length)] || null;
+      selected = candidates[Math.floor(Math.random() * candidates.length)] || null;
 
-
-  if (!selected) {
-    return res.status(404).json({
-      ok: false,
-      message: "No available flights right now. Please top up and try again.",
-    });
-  }
-}
+      if (!selected) {
+        return res.status(404).json({
+          ok: false,
+          message: "No available flights right now. Please top up and try again.",
+        });
+      }
+    }
 
     const rateToUse = isBonus ? vip.bonusCommissionRate : vip.commissionRate;
     const commission = calcCommission(selected.price, rateToUse);
@@ -262,6 +270,8 @@ selected = candidates[Math.floor(Math.random() * candidates.length)] || null;
       commission,
       isBonus,
     });
+
+    const resolvedImageUrl = await resolveOrderImage(selected);
 
     const stats = buildPendingStats(
       created.price,
@@ -278,7 +288,7 @@ selected = candidates[Math.floor(Math.random() * candidates.length)] || null;
       price: created.price,
       commission: created.commission,
       isBonus: created.isBonus,
-      imageUrl: selected.imageUrl || "",
+      imageUrl: resolvedImageUrl,
       availableBalance: stats.availableBalance,
       shortBalance: stats.shortBalance,
       pendingAmount: stats.pendingAmount,
@@ -431,7 +441,7 @@ async function currentOrder(req, res) {
       user: userId,
       status: "PENDING",
     })
-      .populate("poolOrder", "imageUrl")
+      .populate("poolOrder", "imageUrl imageKey")
       .lean();
 
     if (!pending) {
@@ -449,6 +459,8 @@ async function currentOrder(req, res) {
       pending.isBonus
     );
 
+    const pendingImageUrl = await resolveOrderImage(pending.poolOrder);
+
     return res.json({
       ok: true,
       pending: {
@@ -458,7 +470,7 @@ async function currentOrder(req, res) {
         price: pending.price,
         commission: pending.commission,
         isBonus: pending.isBonus,
-        imageUrl: pending.poolOrder?.imageUrl || "",
+        imageUrl: pendingImageUrl,
         availableBalance: stats.availableBalance,
         shortBalance: stats.shortBalance,
         pendingAmount: stats.pendingAmount,

@@ -3,17 +3,22 @@ const User = require("../models/User");
 const OrderPool = require("../models/OrderPool");
 const BonusRule = require("../models/BonusRule");
 const UserOrder = require("../models/UserOrder");
+const OrderImageMap = require("../models/OrderImageMap");
 
 // ✅ add order to pool
 async function createPoolOrder(req, res) {
   try {
-    const { orderNumber, orderName, price, imageUrl } = req.body;
+    const { orderNumber, orderName, price, imageUrl, imageKey } = req.body;
+
+    const finalImageKey =
+      String(imageKey || "").trim() || getImageKeyFromOrderName(orderName);
 
     const created = await OrderPool.create({
       orderNumber,
       orderName,
       price,
-      imageUrl,
+      imageUrl: String(imageUrl || "").trim(), // fallback only
+      imageKey: finalImageKey,
       isActive: true,
     });
 
@@ -24,11 +29,41 @@ async function createPoolOrder(req, res) {
   }
 }
 
+function normalizeImageKey(value = "") {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-");
+}
+
+function getImageKeyFromOrderName(orderName = "") {
+  const left = String(orderName).split("–")[0]?.split("->")[0]?.split("→")[0]?.trim() || "";
+  return normalizeImageKey(left);
+}
+
 // ✅ list pool orders (for admin pool page)
 async function listPoolOrders(req, res) {
   try {
     const orders = await OrderPool.find().sort({ createdAt: -1 }).lean();
-    return res.json({ ok: true, orders });
+    const maps = await OrderImageMap.find({ isActive: true }).lean();
+
+    const mapByKey = new Map(
+      maps.map((m) => [String(m.key).trim().toLowerCase(), m.imageUrl || ""])
+    );
+
+    const enriched = orders.map((o) => {
+      const resolvedImageUrl =
+        mapByKey.get(String(o.imageKey || "").trim().toLowerCase()) ||
+        o.imageUrl ||
+        "";
+
+      return {
+        ...o,
+        resolvedImageUrl,
+      };
+    });
+
+    return res.json({ ok: true, orders: enriched });
   } catch (err) {
     console.error("listPoolOrders error:", err);
     return res.status(500).json({ ok: false, message: "Server error" });
@@ -241,16 +276,15 @@ async function resetUserOrders(req, res) {
 async function updatePoolOrder(req, res) {
   try {
     const { id } = req.params;
-    const { orderNumber, orderName, price, imageUrl, isActive } = req.body;
+    const { orderNumber, orderName, price, imageUrl, imageKey, isActive } = req.body;
 
-    const order = await OrderPool.findById(id);
-    if (!order) return res.status(404).json({ ok: false, message: "Order not found" });
-
-    // ✅ only update fields that exist
     if (orderNumber !== undefined) order.orderNumber = String(orderNumber).trim();
     if (orderName !== undefined) order.orderName = String(orderName).trim();
     if (price !== undefined) order.price = Number(price);
     if (imageUrl !== undefined) order.imageUrl = String(imageUrl).trim();
+    if (imageKey !== undefined) {
+      order.imageKey = String(imageKey).trim() || getImageKeyFromOrderName(order.orderName);
+    }
     if (isActive !== undefined) order.isActive = Boolean(isActive);
 
     await order.save();

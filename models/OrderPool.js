@@ -5,7 +5,8 @@ const orderPoolSchema = new mongoose.Schema(
     orderNumber: { type: String, required: true, unique: true, trim: true },
     orderName: { type: String, required: true, trim: true },
     price: { type: Number, required: true, min: 0 },
-    imageUrl: { type: String, default: "" },
+    imageUrl: { type: String, default: "" }, // old fallback
+    imageKey: { type: String, default: "", index: true },
     isActive: { type: Boolean, default: true },
   },
   { timestamps: true }
