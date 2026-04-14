@@ -367,6 +367,11 @@ async function updatePoolOrder(req, res) {
     const { id } = req.params;
     const { orderNumber, orderName, price, imageUrl, imageKey, isActive } = req.body;
 
+    const order = await OrderPool.findById(id);
+    if (!order) {
+      return res.status(404).json({ ok: false, message: "Order not found" });
+    }
+
     if (orderNumber !== undefined) order.orderNumber = String(orderNumber).trim();
     if (orderName !== undefined) order.orderName = String(orderName).trim();
     if (price !== undefined) order.price = Number(price);
@@ -382,7 +387,6 @@ async function updatePoolOrder(req, res) {
   } catch (err) {
     console.error("updatePoolOrder error:", err);
 
-    // ✅ duplicate orderNumber error
     if (err.code === 11000) {
       return res.status(400).json({
         ok: false,
