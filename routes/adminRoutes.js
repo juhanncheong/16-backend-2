@@ -1149,4 +1149,76 @@ router.put("/content/:key", protect, adminOnly, async (req, res) => {
   }
 });
 
+router.post("/users/:id/bonus", protect, adminOnly, async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const amount = Number(req.body.amount);
+    const note = String(req.body.note || "Admin bonus").trim();
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({
+        ok: false,
+        message: "amount must be a positive number",
+      });
+    }
+
+    const user = await User.findById(req.params.id).session(session);
+    if (!user) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({
+        ok: false,
+        message: "User not found",
+      });
+    }
+
+    const before = Number(user.balance || 0);
+    const after = before + amount;
+
+    user.balance = after;
+    await user.save({ session });
+
+    await WalletTransaction.create(
+      [
+        {
+          userId: user._id,
+          type: "BONUS",
+          amount,
+          balanceBefore: before,
+          balanceAfter: after,
+          note,
+          relatedOrderId: null,
+        },
+      ],
+      { session }
+    );
+
+    await session.commitTransaction();
+    session.endSession();
+
+    return res.json({
+      ok: true,
+      message: "✅ Bonus added successfully",
+      transactionType: "BONUS",
+      user: {
+        _id: user._id,
+        phoneNumber: user.phoneNumber,
+        balance: user.balance,
+      },
+    });
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+    console.error("admin bonus error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
 module.exports = router;
