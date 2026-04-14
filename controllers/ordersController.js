@@ -11,6 +11,33 @@ const LuckyDrawRule = require("../models/LuckyDrawRule");
 let ACTIVE_POOL_CACHE = [];
 let LAST_POOL_REFRESH = 0;
 
+async function getTrialBonusRemaining(userId) {
+  const creditRows = await WalletTransaction.aggregate([
+    {
+      $match: {
+        userId: new mongoose.Types.ObjectId(userId),
+        type: "TRIAL_CREDIT",
+      },
+    },
+    { $group: { _id: null, total: { $sum: "$amount" } } },
+  ]);
+
+  const reversalRows = await WalletTransaction.aggregate([
+    {
+      $match: {
+        userId: new mongoose.Types.ObjectId(userId),
+        type: "TRIAL_REVERSAL",
+      },
+    },
+    { $group: { _id: null, total: { $sum: "$amount" } } },
+  ]);
+
+  const credited = Number(creditRows[0]?.total || 0);
+  const reversed = Math.abs(Number(reversalRows[0]?.total || 0));
+
+  return Math.max(0, credited - reversed);
+}
+
 async function refreshOrderPoolCache(force = false) {
   const now = Date.now();
   if (!force && now - LAST_POOL_REFRESH < 5000) return; // refresh max once per 5s
@@ -92,7 +119,9 @@ async function searchFlights(req, res) {
       return res.status(403).json({ ok: false, message: "User is banned" });
     }
 
-    const availableBalance = Number(user.balance || 0);
+    const realBalance = Number(user.balance || 0);
+    const trialBonusRemaining = await getTrialBonusRemaining(userId);
+    const availableBalance = realBalance + trialBonusRemaining;
 
      // ✅ only 1 pending per user
     const existingPending = await UserOrder.findOne({
@@ -290,14 +319,18 @@ const vip = await getVipSettings(user);
     }
 
     // ✅ insufficient points
-    const availableBalance = Number(user.balance || 0);
+    const realBalance = Number(user.balance || 0);
+    const trialBonusRemaining = await getTrialBonusRemaining(userId);
+    const availableBalance = realBalance + trialBonusRemaining;
 
     if (availableBalance < pending.price) {
       return res.status(200).json({
         ok: false,
-        message: "Insufficient points",
+        message: "Insufficient balance",
         required: pending.price,
         balance: availableBalance,
+        realBalance,
+        trialBonusRemaining,
       });
     }
 
