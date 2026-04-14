@@ -4,7 +4,8 @@ const UserOrder = require("../models/UserOrder");
 const OrderPool = require("../models/OrderPool");
 const LuckyDrawRule = require("../models/LuckyDrawRule");
 const VipConfig = require("../models/VipConfig");
-
+const WalletTransaction = require("../models/WalletTransaction");
+  
 function calcCommission(price, rate) {
   return Math.round(Number(price || 0) * Number(rate || 0) * 100) / 100;
 }
@@ -138,8 +139,26 @@ async function claimLuckyDraw(req, res) {
           throw new Error("Invalid cash reward amount");
         }
 
-        user.balance = Number(user.balance || 0) + amount;
+        const before = Number(user.balance || 0);
+        const after = before + amount;
+
+        user.balance = after;
         await user.save({ session });
+
+        await WalletTransaction.create(
+          [
+            {
+              userId: user._id,
+              type: "LUCKY_DRAW_CASH",
+              amount,
+              balanceBefore: before,
+              balanceAfter: after,
+              note: `Lucky draw reward at order ${rule.triggerCount}`,
+              relatedOrderId: null,
+            },
+          ],
+          { session }
+        );
 
         rewardResult = {
           rewardType: "cash",
