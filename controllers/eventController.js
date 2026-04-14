@@ -1,18 +1,35 @@
 const Event = require("../models/Event");
 
+function buildImageUrl(req, file) {
+  if (!file) return "";
+  return `${req.protocol}://${req.get("host")}/uploads/events/${file.filename}`;
+}
+
 // ✅ Admin: Create new event
 exports.createEvent = async (req, res) => {
   try {
-    const { name, description, imageUrl } = req.body;
+    const name = String(req.body.name || "").trim();
+    const description = String(req.body.description || "").trim();
+
+    // allow either uploaded file or manual imageUrl
+    let imageUrl = String(req.body.imageUrl || "").trim();
+
+    if (req.file) {
+      imageUrl = buildImageUrl(req, req.file);
+    }
 
     if (!name || !description || !imageUrl) {
       return res.status(400).json({
         success: false,
-        message: "name, description, and imageUrl are required",
+        message: "name, description, and event image are required",
       });
     }
 
-    const newEvent = await Event.create({ name, description, imageUrl });
+    const newEvent = await Event.create({
+      name,
+      description,
+      imageUrl,
+    });
 
     return res.status(201).json({
       success: true,
@@ -50,32 +67,41 @@ exports.getEvents = async (req, res) => {
 exports.updateEvent = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, imageUrl } = req.body;
+    const name = String(req.body.name || "").trim();
+    const description = String(req.body.description || "").trim();
 
-    if (!name || !description || !imageUrl) {
-      return res.status(400).json({
-        success: false,
-        message: "name, description, and imageUrl are required",
-      });
-    }
+    const existing = await Event.findById(id);
 
-    const updated = await Event.findByIdAndUpdate(
-      id,
-      { name, description, imageUrl },
-      { new: true }
-    );
-
-    if (!updated) {
+    if (!existing) {
       return res.status(404).json({
         success: false,
         message: "Event not found",
       });
     }
 
+    let imageUrl = String(req.body.imageUrl || "").trim() || existing.imageUrl;
+
+    if (req.file) {
+      imageUrl = buildImageUrl(req, req.file);
+    }
+
+    if (!name || !description || !imageUrl) {
+      return res.status(400).json({
+        success: false,
+        message: "name, description, and event image are required",
+      });
+    }
+
+    existing.name = name;
+    existing.description = description;
+    existing.imageUrl = imageUrl;
+
+    await existing.save();
+
     res.json({
       success: true,
       message: "Event updated",
-      event: updated,
+      event: existing,
     });
   } catch (err) {
     console.error("updateEvent error:", err);
