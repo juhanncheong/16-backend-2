@@ -5,6 +5,7 @@ const WalletTransaction = require("../models/WalletTransaction");
 const mongoose = require("mongoose");
 const { getLedgerTotal } = require("../utils/balance");
 const UserOrder = require("../models/UserOrder");
+const VipConfig = require("../models/VipConfig");
 
 const router = express.Router();
 const jwt = require("jsonwebtoken");
