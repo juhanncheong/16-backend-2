@@ -1221,4 +1221,53 @@ router.post("/users/:id/bonus", protect, adminOnly, async (req, res) => {
   }
 });
 
+router.get("/users/:id/bonus-history", protect, adminOnly, async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const page = Math.max(1, parseInt(req.query.page || "1", 10));
+    const limit = Math.max(1, parseInt(req.query.limit || "10", 10));
+    const q = String(req.query.q || "").trim();
+
+    const filter = {
+      userId,
+      type: "BONUS",
+    };
+
+    if (q) {
+      filter.$or = [
+        { note: { $regex: q, $options: "i" } },
+      ];
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [rows, total] = await Promise.all([
+      WalletTransaction.find(filter)
+        .sort({ createdAt: -1 })
+        .populate("userId", "uid phoneNumber")
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      WalletTransaction.countDocuments(filter),
+    ]);
+
+    return res.json({
+      ok: true,
+      rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    });
+  } catch (err) {
+    console.error("bonus-history error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
 module.exports = router;
