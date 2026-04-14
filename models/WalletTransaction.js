@@ -14,6 +14,7 @@ const walletTransactionSchema = new mongoose.Schema(
         "ORDER_SUBMIT",
         "TRIAL_CREDIT",
         "TRIAL_REVERSAL",
+        "LUCKY_DRAW_CASH",
       ],
       required: true,
     },
