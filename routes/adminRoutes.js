@@ -1270,4 +1270,82 @@ router.get("/users/:id/bonus-history", protect, adminOnly, async (req, res) => {
   }
 });
 
+router.get("/bonus-history", protect, adminOnly, async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page || "1", 10));
+    const limit = Math.max(1, parseInt(req.query.limit || "10", 10));
+    const q = String(req.query.q || "").trim();
+    const uid = String(req.query.uid || "").trim();
+
+    const skip = (page - 1) * limit;
+
+    let userFilterId = null;
+
+    if (uid) {
+      const user = await User.findOne({ uid }).select("_id uid phoneNumber").lean();
+      if (!user) {
+        return res.json({
+          ok: true,
+          rows: [],
+          user: null,
+          pagination: {
+            page,
+            limit,
+            total: 0,
+            totalPages: 1,
+          },
+        });
+      }
+      userFilterId = user._id;
+    }
+
+    const filter = {
+      type: "BONUS",
+    };
+
+    if (userFilterId) {
+      filter.userId = userFilterId;
+    }
+
+    if (q) {
+      filter.note = { $regex: q, $options: "i" };
+    }
+
+    const [rows, total] = await Promise.all([
+      WalletTransaction.find(filter)
+        .sort({ createdAt: -1 })
+        .populate("userId", "uid phoneNumber")
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      WalletTransaction.countDocuments(filter),
+    ]);
+
+    let pickedUser = null;
+    if (userFilterId) {
+      pickedUser = await User.findById(userFilterId)
+        .select("_id uid phoneNumber balance")
+        .lean();
+    }
+
+    return res.json({
+      ok: true,
+      user: pickedUser,
+      rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    });
+  } catch (err) {
+    console.error("bonus-history error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
 module.exports = router;
