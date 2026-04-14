@@ -41,6 +41,95 @@ function getImageKeyFromOrderName(orderName = "") {
   return normalizeImageKey(left);
 }
 
+async function createOrderImageMap(req, res) {
+  try {
+    const { key, imageUrl } = req.body;
+
+    if (!key || !imageUrl) {
+      return res.status(400).json({
+        ok: false,
+        message: "key and imageUrl are required",
+      });
+    }
+
+    const created = await OrderImageMap.create({
+      key: String(key).trim().toLowerCase(),
+      imageUrl: String(imageUrl).trim(),
+      isActive: true,
+    });
+
+    return res.json({ ok: true, map: created });
+  } catch (err) {
+    console.error("createOrderImageMap error:", err);
+
+    if (err.code === 11000) {
+      return res.status(400).json({
+        ok: false,
+        message: "Key already exists",
+      });
+    }
+
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+}
+
+async function listOrderImageMaps(req, res) {
+  try {
+    const maps = await OrderImageMap.find().sort({ createdAt: -1 }).lean();
+    return res.json({ ok: true, maps });
+  } catch (err) {
+    console.error("listOrderImageMaps error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+}
+
+async function updateOrderImageMap(req, res) {
+  try {
+    const { id } = req.params;
+    const { key, imageUrl, isActive } = req.body;
+
+    const map = await OrderImageMap.findById(id);
+    if (!map) {
+      return res.status(404).json({ ok: false, message: "Image map not found" });
+    }
+
+    if (key !== undefined) map.key = String(key).trim().toLowerCase();
+    if (imageUrl !== undefined) map.imageUrl = String(imageUrl).trim();
+    if (isActive !== undefined) map.isActive = Boolean(isActive);
+
+    await map.save();
+
+    return res.json({ ok: true, map });
+  } catch (err) {
+    console.error("updateOrderImageMap error:", err);
+
+    if (err.code === 11000) {
+      return res.status(400).json({
+        ok: false,
+        message: "Key already exists",
+      });
+    }
+
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+}
+
+async function deleteOrderImageMap(req, res) {
+  try {
+    const { id } = req.params;
+
+    const deleted = await OrderImageMap.findByIdAndDelete(id);
+    if (!deleted) {
+      return res.status(404).json({ ok: false, message: "Image map not found" });
+    }
+
+    return res.json({ ok: true, message: "Image map deleted" });
+  } catch (err) {
+    console.error("deleteOrderImageMap error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+}
+
 // ✅ list pool orders (for admin pool page)
 async function listPoolOrders(req, res) {
   try {
@@ -405,4 +494,8 @@ module.exports = {
   resetUserOrders,
   setUserOrdersCount,
   setUserResetCount,
+  createOrderImageMap,
+  listOrderImageMaps,
+  updateOrderImageMap,
+  deleteOrderImageMap,
 };
