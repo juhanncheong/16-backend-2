@@ -66,6 +66,12 @@ const luckyDrawRuleSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+
+    bonusCommissionRateOverride: {
+      type: Number,
+      default: null,
+    },
+
   },
   { timestamps: true }
 );

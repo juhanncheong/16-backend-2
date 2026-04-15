@@ -181,7 +181,14 @@ async function claimLuckyDraw(req, res) {
         }
 
         const vip = await getVipSettings(user);
-        const commission = calcCommission(poolOrder.price, vip.bonusCommissionRate);
+
+        const rateToUse =
+          rule.bonusCommissionRateOverride !== undefined &&
+          rule.bonusCommissionRateOverride !== null
+            ? Number(rule.bonusCommissionRateOverride)
+            : Number(vip.bonusCommissionRate);
+
+        const commission = calcCommission(poolOrder.price, rateToUse);
 
         const created = await UserOrder.create(
           [
@@ -208,6 +215,7 @@ async function claimLuckyDraw(req, res) {
           orderName: userOrder.orderName,
           price: userOrder.price,
           commission: userOrder.commission,
+          bonusCommissionRateUsed: rateToUse,
           status: userOrder.status,
           isBonus: true,
         };

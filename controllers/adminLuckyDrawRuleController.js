@@ -13,6 +13,7 @@ async function createLuckyDrawRule(req, res) {
       poolOrderId,
       title,
       description,
+      bonusCommissionRateOverride,
     } = req.body;
 
     if (!uid || !triggerCount || !rewardType) {
@@ -49,9 +50,11 @@ async function createLuckyDrawRule(req, res) {
 
     let finalCashAmount = 0;
     let finalPoolOrder = null;
+    let finalBonusCommissionRateOverride = null;
 
     if (rewardType === "cash") {
       finalCashAmount = Number(cashAmount);
+      finalBonusCommissionRateOverride = null;
 
       if (!Number.isFinite(finalCashAmount) || finalCashAmount <= 0) {
         return res.status(400).json({
@@ -72,21 +75,40 @@ async function createLuckyDrawRule(req, res) {
       const poolOrder = await OrderPool.findById(poolOrderId).select(
         "_id orderNumber orderName isActive"
       );
-
+    
       if (!poolOrder) {
         return res.status(404).json({
           ok: false,
           message: "Pool order not found",
         });
       }
-
+    
       if (!poolOrder.isActive) {
         return res.status(400).json({
           ok: false,
           message: "Selected pool order is inactive",
         });
       }
-
+    
+      if (
+        bonusCommissionRateOverride !== undefined &&
+        bonusCommissionRateOverride !== null &&
+        String(bonusCommissionRateOverride).trim() !== ""
+      ) {
+        const cleanRate = Number(bonusCommissionRateOverride);
+    
+        if (!Number.isFinite(cleanRate) || cleanRate < 0) {
+          return res.status(400).json({
+            ok: false,
+            message: "bonusCommissionRateOverride must be a number >= 0",
+          });
+        }
+    
+        finalBonusCommissionRateOverride = cleanRate;
+      } else {
+        finalBonusCommissionRateOverride = null;
+      }
+    
       finalPoolOrder = poolOrder._id;
       finalCashAmount = 0;
     }
@@ -101,6 +123,7 @@ async function createLuckyDrawRule(req, res) {
           rewardType,
           cashAmount: finalCashAmount,
           poolOrder: finalPoolOrder,
+          bonusCommissionRateOverride: finalBonusCommissionRateOverride,
           title: title || "Lucky Draw",
           description: description || "Pick 1 egg and win your reward",
           isActive: true,
@@ -151,7 +174,14 @@ async function listUserLuckyDrawRules(req, res) {
 
     return res.json({
       ok: true,
-      rules,
+      rules: rules.map((rule) => ({
+        ...rule,
+        bonusCommissionRateOverride:
+          rule.bonusCommissionRateOverride !== undefined &&
+          rule.bonusCommissionRateOverride !== null
+            ? Number(rule.bonusCommissionRateOverride)
+            : null,
+      })),
     });
   } catch (err) {
     console.error("listUserLuckyDrawRules error:", err);
