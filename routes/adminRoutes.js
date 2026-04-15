@@ -164,6 +164,12 @@ router.get("/users", protect, async (req, res) => {
         displayBalance = cleanBalance - Number(pending.price || 0);
       }
 
+      const pendingAmount = pending
+        ? (pending.isBonus
+            ? Number(pending.price || 0) + Number(pending.commission || 0)
+            : 0)
+        : 0;
+
       const vipRank = Number(u.vipRank || 1);
       const vip = ranks.find((r) => Number(r.rank) === vipRank) || ranks[0];
       const derivedOrdersLimit = Number(vip?.ordersLimit || u.ordersLimit || 40);
@@ -176,6 +182,7 @@ router.get("/users", protect, async (req, res) => {
         currentPendingOrder: pending,
         availableBalance,
         displayBalance,
+        pendingAmount,
       };
     });
 
