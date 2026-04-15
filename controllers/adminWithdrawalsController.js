@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const Withdrawal = require("../models/Withdrawal");
 const User = require("../models/User");
+const RecentWithdrawalAddress = require("../models/RecentWithdrawalAddress");
 
 // ✅ Admin: list withdrawals (optional filters)
 exports.adminListWithdrawals = async (req, res) => {
@@ -158,3 +159,90 @@ exports.adminResetUserWithdrawPin = async (req, res) => {
   }
 };
 
+// ✅ Admin: get recent withdrawal address list
+exports.adminListRecentWithdrawalAddresses = async (req, res) => {
+  try {
+    const { userId, cryptoType } = req.query;
+
+    const filter = {};
+    if (userId) filter.user = userId;
+    if (cryptoType) filter.cryptoType = String(cryptoType).trim();
+
+    const items = await RecentWithdrawalAddress.find(filter)
+      .populate("user", "uid phoneNumber")
+      .sort({ lastUsedAt: -1 })
+      .lean();
+
+    return res.json({ ok: true, items });
+  } catch (err) {
+    console.error("adminListRecentWithdrawalAddresses error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+};
+
+// ✅ Admin: update recent withdrawal address list
+exports.adminUpdateRecentWithdrawalAddress = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { address, cryptoType } = req.body || {};
+
+    const item = await RecentWithdrawalAddress.findById(id);
+    if (!item) {
+      return res.status(404).json({ ok: false, message: "Record not found" });
+    }
+
+    if (address !== undefined) {
+      const cleanAddress = String(address || "").trim();
+      if (!cleanAddress || cleanAddress.length < 8) {
+        return res.status(400).json({ ok: false, message: "Invalid address" });
+      }
+      item.address = cleanAddress;
+    }
+
+    if (cryptoType !== undefined) {
+      item.cryptoType = String(cryptoType || "").trim();
+    }
+
+    await item.save();
+
+    const updated = await RecentWithdrawalAddress.findById(item._id)
+      .populate("user", "uid phoneNumber")
+      .lean();
+
+    return res.json({
+      ok: true,
+      message: "✅ Recent withdrawal address updated",
+      item: updated,
+    });
+  } catch (err) {
+    if (err?.code === 11000) {
+      return res.status(409).json({
+        ok: false,
+        message: "Duplicate recent withdrawal address for this user and crypto type",
+      });
+    }
+
+    console.error("adminUpdateRecentWithdrawalAddress error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+};
+
+// ✅ Admin: delete recent withdrawal address list
+exports.adminDeleteRecentWithdrawalAddress = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const deleted = await RecentWithdrawalAddress.findByIdAndDelete(id);
+    if (!deleted) {
+      return res.status(404).json({ ok: false, message: "Record not found" });
+    }
+
+    return res.json({
+      ok: true,
+      message: "✅ Recent withdrawal address deleted",
+    });
+  } catch (err) {
+    console.error("adminDeleteRecentWithdrawalAddress error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+};

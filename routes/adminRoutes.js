@@ -738,6 +738,27 @@ router.get("/withdrawals", protect, adminOnly, adminWithdrawalsController.adminL
 router.put("/withdrawals/:id/approve", protect, adminOnly, adminWithdrawalsController.adminApproveWithdrawal);
 router.put("/withdrawals/:id/reject", protect, adminOnly, adminWithdrawalsController.adminRejectWithdrawal);
 
+router.get(
+  "/recent-withdrawal-addresses",
+  protect,
+  adminOnly,
+  adminWithdrawalsController.adminListRecentWithdrawalAddresses
+);
+
+router.patch(
+  "/recent-withdrawal-addresses/:id",
+  protect,
+  adminOnly,
+  adminWithdrawalsController.adminUpdateRecentWithdrawalAddress
+);
+
+router.delete(
+  "/recent-withdrawal-addresses/:id",
+  protect,
+  adminOnly,
+  adminWithdrawalsController.adminDeleteRecentWithdrawalAddress
+);
+
 router.patch(
   "/users/:id/withdraw-pin/reset",
   protect,
