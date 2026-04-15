@@ -40,6 +40,7 @@ router.get("/status", protect, async (req, res) => {
     const userId = req.user.userId;
 
     const user = await User.findById(userId).lean();
+    const signinRewardEnabled = Boolean(user.signinRewardEnabled);
     if (!user) {
       return res.status(404).json({ ok: false, message: "User not found" });
     }
@@ -64,9 +65,9 @@ router.get("/status", protect, async (req, res) => {
 // ✅ reward should match what they will claim next
 const rewardAmount = await getRewardForDay(nextStreakDay);
 
-    const canClaim = unlocked && !claimedThisRound;
+const canClaim = signinRewardEnabled && unlocked && !claimedThisRound;
 
-    const rule = await SigninRewardRule.findOne({ isActive: true }).lean();
+const rule = await SigninRewardRule.findOne({ isActive: true }).lean();
 const dayRewards = rule?.dayRewards || [300, 0, 0, 0, 0, 0];
 
 return res.json({
@@ -89,10 +90,12 @@ return res.json({
 
   message: canClaim
     ? "You can claim your sign-in reward now."
+    : !signinRewardEnabled
+    ? "Sign-in reward is not enabled yet. Please wait for admin approval."
     : !unlocked
     ? `Complete ${ordersLimit} orders to unlock sign-in reward.`
     : "Already claimed this round. Wait for admin reset.",
-});
+  });
 
   } catch (err) {
     console.error("signin status error:", err);
@@ -124,6 +127,13 @@ router.post("/claim", protect, async (req, res) => {
 
     const unlocked = ordersCompleted >= ordersLimit;
     const claimedThisRound = lastClaimedResetCount >= totalResetCount;
+
+    if (!user.signinRewardEnabled) {
+      return res.status(403).json({
+        ok: false,
+        message: "Sign-in reward is not enabled yet. Please wait for admin approval.",
+      });
+    }
 
     if (!unlocked) {
       return res.status(400).json({
