@@ -4,6 +4,7 @@ const OrderPool = require("../models/OrderPool");
 const BonusRule = require("../models/BonusRule");
 const UserOrder = require("../models/UserOrder");
 const OrderImageMap = require("../models/OrderImageMap");
+const VipConfig = require("../models/VipConfig");
 
 // ✅ add order to pool
 async function createPoolOrder(req, res) {
@@ -253,6 +254,13 @@ async function createBonusRule(req, res) {
   }
 }
 
+let vipConfig = await VipConfig.findOne().lean();
+if (!vipConfig) {
+  vipConfig = await VipConfig.create({});
+}
+
+const globalBonusCommissionRate = Number(vipConfig?.bonusCommissionRate ?? 0);
+
 // ✅ list bonus rules for a specific user + REAL status
 async function listUserBonusRules(req, res) {
   try {
@@ -300,10 +308,22 @@ async function listUserBonusRules(req, res) {
       if (hit?.status === "PENDING") status = "PENDING";
       if (hit?.status === "COMPLETED") status = "COMPLETED";
 
+      const hasCustomRate =
+        r.useCustomCommissionRate === true &&
+        Number.isFinite(Number(r.customCommissionRate)) &&
+        Number(r.customCommissionRate) >= 0;
+
+      const finalCommissionRate = hasCustomRate
+        ? Number(r.customCommissionRate)
+        : globalBonusCommissionRate;
+
       return {
         ...r,
         status,
         userOrderId: hit?._id || null,
+        commissionSource: hasCustomRate ? "CUSTOM" : "GLOBAL",
+        finalCommissionRate,
+        globalBonusCommissionRate,
       };
     });
 
