@@ -276,37 +276,33 @@ async function listUserBonusRules(req, res) {
       .sort({ triggerCount: 1 })
       .lean();
 
-    // 2) Compute REAL status using UserOrder
     const poolOrderIds = rules
       .map((r) => r.poolOrder?._id)
       .filter(Boolean)
       .map((id) => id.toString());
 
-    let userOrders = [];
+    let pendingOrders = [];
     if (poolOrderIds.length) {
-      userOrders = await UserOrder.find({
+      pendingOrders = await UserOrder.find({
         user: user._id,
         isBonus: true,
+        status: "PENDING",
         poolOrder: { $in: poolOrderIds },
-      })
-        .sort({ createdAt: -1 })
-        .lean();
+      }).lean();
     }
 
-    // Map latest UserOrder per poolOrder
-    const latestByPoolOrder = new Map();
-    for (const uo of userOrders) {
-      const key = String(uo.poolOrder);
-      if (!latestByPoolOrder.has(key)) latestByPoolOrder.set(key, uo);
+    const pendingByPoolOrder = new Map();
+    for (const uo of pendingOrders) {
+      pendingByPoolOrder.set(String(uo.poolOrder), uo);
     }
 
     const rulesWithStatus = rules.map((r) => {
       const poolId = r.poolOrder?._id ? String(r.poolOrder._id) : null;
-      const hit = poolId ? latestByPoolOrder.get(poolId) : null;
+      const pendingHit = poolId ? pendingByPoolOrder.get(poolId) : null;
 
       let status = "ACTIVE";
-      if (hit?.status === "PENDING") status = "PENDING";
-      if (hit?.status === "COMPLETED") status = "COMPLETED";
+      if (r.isActive === false) status = "COMPLETED";
+      else if (pendingHit) status = "PENDING";
 
       const hasCustomRate =
         r.useCustomCommissionRate === true &&
@@ -320,7 +316,7 @@ async function listUserBonusRules(req, res) {
       return {
         ...r,
         status,
-        userOrderId: hit?._id || null,
+        userOrderId: pendingHit?._id || null,
         commissionSource: hasCustomRate ? "CUSTOM" : "GLOBAL",
         finalCommissionRate,
         globalBonusCommissionRate,

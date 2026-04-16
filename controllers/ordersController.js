@@ -336,12 +336,14 @@ const vip = await getVipSettings(user);
     if (!pending) {
       return res.status(400).json({ ok: false, message: "No pending order found" });
     }
-
+    
+    const triggerCountUsed = Number(user.ordersCompleted || 0) + 1;
+    
     // ✅ insufficient points
     const realBalance = Number(user.balance || 0);
     const trialBonusRemaining = await getTrialBonusRemaining(userId);
     const availableBalance = realBalance + trialBonusRemaining;
-
+    
     if (availableBalance < pending.price) {
       return res.status(200).json({
         ok: false,
@@ -352,13 +354,27 @@ const vip = await getVipSettings(user);
         trialBonusRemaining,
       });
     }
-
+    
     // ✅ ONLY reward commission (do not deduct price)
     user.balance += pending.commission;
     user.ordersCompleted += 1;
     pending.status = "COMPLETED";
     pending.completedAt = new Date();
-
+    
+    if (pending.isBonus) {
+      await BonusRule.updateOne(
+        {
+          user: user._id,
+          triggerCount: triggerCountUsed,
+          poolOrder: pending.poolOrder,
+          isActive: true,
+        },
+        {
+          $set: { isActive: false },
+        }
+      );
+    }
+        
     // ✅ Auto trial reversal when user finishes required orders
 if (user.ordersCompleted >= vip.ordersLimit) {
   const trialRows = await WalletTransaction.aggregate([
