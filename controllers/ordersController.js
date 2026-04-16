@@ -211,10 +211,19 @@ async function searchFlights(req, res) {
 
     let selected = null;
     let isBonus = false;
+    let bonusCommissionRateToUse = Number(vip.bonusCommissionRate ?? 0);
 
     if (bonusRule?.poolOrder?.isActive) {
       selected = bonusRule.poolOrder;
       isBonus = true;
+
+      if (
+        bonusRule.useCustomCommissionRate === true &&
+        Number.isFinite(Number(bonusRule.customCommissionRate)) &&
+        Number(bonusRule.customCommissionRate) >= 0
+      ) {
+        bonusCommissionRateToUse = Number(bonusRule.customCommissionRate);
+      }
     } else {
       const balance = availableBalance;
 
@@ -257,7 +266,7 @@ async function searchFlights(req, res) {
       }
     }
 
-    const rateToUse = isBonus ? vip.bonusCommissionRate : vip.commissionRate;
+    const rateToUse = isBonus ? bonusCommissionRateToUse : vip.commissionRate;
     const commission = calcCommission(selected.price, rateToUse);
 
     const created = await UserOrder.create({

@@ -190,7 +190,13 @@ async function togglePoolOrder(req, res) {
  */
 async function createBonusRule(req, res) {
   try {
-    const { uid, triggerCount, poolOrderId } = req.body;
+    const {
+      uid,
+      triggerCount,
+      poolOrderId,
+      useCustomCommissionRate,
+      customCommissionRate,
+    } = req.body;
 
     if (!uid || !triggerCount || !poolOrderId) {
       return res.status(400).json({
@@ -207,15 +213,34 @@ async function createBonusRule(req, res) {
     }
 
     const poolOrder = await OrderPool.findById(poolOrderId);
-    if (!poolOrder) return res.status(404).json({ ok: false, message: "Pool order not found" });
+    if (!poolOrder) {
+      return res.status(404).json({ ok: false, message: "Pool order not found" });
+    }
 
-    // ✅ Upsert bonus rule for this specific user + triggerCount
+    const useCustom = Boolean(useCustomCommissionRate);
+
+    let finalCustomRate = null;
+    if (useCustom) {
+      const parsedRate = Number(customCommissionRate);
+
+      if (!Number.isFinite(parsedRate) || parsedRate < 0) {
+        return res.status(400).json({
+          ok: false,
+          message: "customCommissionRate must be a number >= 0 when useCustomCommissionRate is true",
+        });
+      }
+
+      finalCustomRate = parsedRate;
+    }
+
     const updated = await BonusRule.findOneAndUpdate(
       { user: user._id, triggerCount: Number(triggerCount) },
       {
         $set: {
           poolOrder: poolOrder._id,
           isActive: true,
+          useCustomCommissionRate: useCustom,
+          customCommissionRate: finalCustomRate,
         },
       },
       { new: true, upsert: true }
