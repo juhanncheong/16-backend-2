@@ -254,13 +254,6 @@ async function createBonusRule(req, res) {
   }
 }
 
-let vipConfig = await VipConfig.findOne().lean();
-if (!vipConfig) {
-  vipConfig = await VipConfig.create({});
-}
-
-const globalBonusCommissionRate = Number(vipConfig?.bonusCommissionRate ?? 0);
-
 // ✅ list bonus rules for a specific user + REAL status
 async function listUserBonusRules(req, res) {
   try {
@@ -270,6 +263,13 @@ async function listUserBonusRules(req, res) {
     if (!user) {
       return res.status(404).json({ ok: false, message: "User not found" });
     }
+
+    let vipConfig = await VipConfig.findOne().lean();
+    if (!vipConfig) {
+      vipConfig = await VipConfig.create({});
+    }
+
+    const globalBonusCommissionRate = Number(vipConfig?.bonusCommissionRate ?? 0);
 
     const rules = await BonusRule.find({ user: user._id })
       .populate("poolOrder")
