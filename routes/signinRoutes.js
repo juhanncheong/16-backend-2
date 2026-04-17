@@ -8,7 +8,7 @@ const SigninRewardRule = require("../models/SigninRewardRule");
 async function getRewardForDay(streakDay) {
   // streakDay = 1..6
   const rule = await SigninRewardRule.findOne({ isActive: true }).lean();
-  const rewards = rule?.dayRewards || [300, 0, 0, 0, 0, 0];
+  const rewards = rule?.dayRewards || [10, 10, 10, 10, 10, 10];
 
   const idx = Math.max(0, Math.min(5, Number(streakDay) - 1));
   return Number(rewards[idx] || 0);
@@ -19,20 +19,28 @@ function calcNextStreakDay({ totalResetCount, lastClaimedResetCount, signinStrea
   const lastRound = Number(lastClaimedResetCount || 0);
   const currentRound = Number(totalResetCount || 1);
 
-  // if already claimed this round => streak stays same
-  if (lastRound >= currentRound) return Math.min(6, Math.max(0, streakNow));
+  // first ever claim
+  if (lastRound === 0) {
+    return 1;
+  }
 
-  // if claimed last round => +1 streak
-  if (lastRound === currentRound - 1) return Math.min(6, streakNow + 1);
+  // already claimed this round => show current streak
+  if (lastRound >= currentRound) {
+    return streakNow > 0 ? Math.min(6, streakNow) : 1;
+  }
 
-  // otherwise streak resets
-  return 1;
+  // any later round claim => continue streak
+  // no reset for skipped rounds
+  // after day 6 => back to day 1
+  const currentDay = streakNow > 0 ? streakNow : 1;
+  return currentDay >= 6 ? 1 : currentDay + 1;
 }
 
 /**
- * ✅ STATUS (Round-based)
+ * STATUS (Round-based, 1 claim per round)
  * Rule:
  * - user can claim if ordersCompleted >= ordersLimit
+ * - AND sign-in reward is enabled
  * - AND user has NOT claimed in current reset round
  */
 router.get("/status", protect, async (req, res) => {
@@ -40,11 +48,11 @@ router.get("/status", protect, async (req, res) => {
     const userId = req.user.userId;
 
     const user = await User.findById(userId).lean();
-    const signinRewardEnabled = Boolean(user.signinRewardEnabled);
     if (!user) {
       return res.status(404).json({ ok: false, message: "User not found" });
     }
 
+    const signinRewardEnabled = Boolean(user.signinRewardEnabled);
     const ordersCompleted = Number(user.ordersCompleted || 0);
     const ordersLimit = Number(user.ordersLimit || 40);
 
@@ -62,41 +70,39 @@ router.get("/status", protect, async (req, res) => {
       signinStreak,
     });
 
-// ✅ reward should match what they will claim next
-const rewardAmount = await getRewardForDay(nextStreakDay);
+    // reward should match what user would claim next
+    const rewardAmount = await getRewardForDay(nextStreakDay);
 
-const canClaim = signinRewardEnabled && unlocked && !claimedThisRound;
+    const canClaim = signinRewardEnabled && unlocked && !claimedThisRound;
 
-const rule = await SigninRewardRule.findOne({ isActive: true }).lean();
-const dayRewards = rule?.dayRewards || [300, 0, 0, 0, 0, 0];
+    const rule = await SigninRewardRule.findOne({ isActive: true }).lean();
+    const dayRewards = rule?.dayRewards || [10, 10, 10, 10, 10, 10];
 
-return res.json({
-  ok: true,
-  ordersCompleted,
-  ordersLimit,
-  totalResetCount,
-  lastClaimedResetCount,
+    return res.json({
+      ok: true,
+      ordersCompleted,
+      ordersLimit,
+      totalResetCount,
+      lastClaimedResetCount,
 
-  nextStreakDay,
-  signinStreak,
+      nextStreakDay,
+      signinStreak,
 
-  unlocked,
-  claimedThisRound,
-  canClaim,
+      unlocked,
+      claimedThisRound,
+      canClaim,
 
-  // ✅ correct reward for next streak day
-  rewardAmount,
-  dayRewards,
+      rewardAmount,
+      dayRewards,
 
-  message: canClaim
-    ? "You can claim your sign-in reward now."
-    : !signinRewardEnabled
-    ? "Sign-in reward is not enabled yet. Please wait for admin approval."
-    : !unlocked
-    ? `Complete ${ordersLimit} orders to unlock sign-in reward.`
-    : "Already claimed this round. Wait for admin reset.",
-  });
-
+      message: canClaim
+        ? "You can claim your sign-in reward now."
+        : !signinRewardEnabled
+        ? "Sign-in reward is not enabled yet. Please wait for admin approval."
+        : !unlocked
+        ? `Complete ${ordersLimit} orders to unlock sign-in reward.`
+        : "Already claimed this round. Wait for admin reset.",
+    });
   } catch (err) {
     console.error("signin status error:", err);
     return res.status(500).json({ ok: false, message: "Server error" });
@@ -104,9 +110,10 @@ return res.json({
 });
 
 /**
- * ✅ CLAIM (Round-based)
+ * CLAIM (Round-based, 1 claim per round)
  * Rule:
  * - user must have ordersCompleted >= ordersLimit
+ * - user must have sign-in reward enabled
  * - user must NOT have claimed in current totalResetCount round
  * - after claim => set lastClaimedResetCount = totalResetCount
  */
@@ -155,12 +162,13 @@ router.post("/claim", protect, async (req, res) => {
       });
     }
 
-    // ✅ Give reward
+    // Give reward
     const streakDay = calcNextStreakDay({
-  totalResetCount,
-  lastClaimedResetCount,
-  signinStreak: user.signinStreak,
-});
+      totalResetCount,
+      lastClaimedResetCount,
+      signinStreak: user.signinStreak,
+    });
+
     const rewardAmount = await getRewardForDay(streakDay);
 
     user.balance = Number(user.balance || 0) + rewardAmount;
@@ -170,18 +178,17 @@ router.post("/claim", protect, async (req, res) => {
 
     await user.save();
 
-    // ✅ Optional: Save claim history (one record per round)
-    // We use localDate as "ROUND-x" to keep unique index (userId + localDate)
+    // Save claim history (one record per round)
     try {
-await SigninClaim.create({
-  userId,
-  localDate: `ROUND-${totalResetCount}`,
-  timezone: "ROUND",
-  streakDay,
-  rewardAmount,
-});
+      await SigninClaim.create({
+        userId,
+        localDate: `ROUND-${totalResetCount}`,
+        timezone: "ROUND",
+        streakDay,
+        rewardAmount,
+      });
     } catch (e) {
-      // If duplicate key happens, ignore it (already recorded)
+      // If duplicate key happens, ignore it
     }
 
     return res.json({
@@ -194,13 +201,13 @@ await SigninClaim.create({
       lastClaimedResetCount: user.lastClaimedResetCount,
     });
   } catch (err) {
-    // If user somehow clicks twice super fast
     if (String(err.message).includes("duplicate key")) {
       return res.status(400).json({
         ok: false,
         message: "Already claimed this round.",
       });
     }
+
     console.error("signin claim error:", err);
     return res.status(500).json({ ok: false, message: "Server error" });
   }
