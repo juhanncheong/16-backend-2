@@ -4,7 +4,7 @@ const adminNotificationSchema = new mongoose.Schema(
   {
     type: {
       type: String,
-      enum: ["DUPLICATE_WITHDRAWAL_ADDRESS", "DUPLICATE_REGISTER_IP"],
+      enum: [ "DUPLICATE_WITHDRAWAL_ADDRESS", "DUPLICATE_REGISTER_IP", "NEW_WITHDRAWAL", ],
       required: true,
     },
 
