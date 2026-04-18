@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 const Withdrawal = require("../models/Withdrawal");
 const User = require("../models/User");
 const RecentWithdrawalAddress = require("../models/RecentWithdrawalAddress");
+const AdminNotification = require("../models/AdminNotification");
 
 const MAX_PIN_ATTEMPTS = 3;
 
@@ -13,6 +14,35 @@ function sanitizePin(pin) {
 function isValidPinFormat(pin) {
   // ✅ 4 to 12 digits (you can change this anytime)
   return /^\d{4,12}$/.test(pin);
+}
+
+async function createAdminNotification({
+  type,
+  title,
+  message,
+  user = null,
+  relatedUser = null,
+  address = "",
+  cryptoType = "",
+  ip = "",
+  session = null,
+}) {
+  return AdminNotification.create(
+    [
+      {
+        type,
+        title,
+        message,
+        user,
+        relatedUser,
+        address,
+        cryptoType,
+        ip,
+        isRead: false,
+      },
+    ],
+    session ? { session } : {}
+  );
 }
 
 // ✅ User sets withdrawal PIN (ONLY if not set yet)
@@ -282,6 +312,39 @@ exports.createWithdrawal = async (req, res) => {
       throw new Error("Invalid withdrawal address");
     }
 
+    const cleanAddress = address.trim();
+
+    const existingOtherUserWithdrawal = await Withdrawal.findOne({
+      address: cleanAddress,
+      cryptoType,
+      user: { $ne: user._id },
+    })
+      .sort({ createdAt: 1 })
+      .session(session);
+
+    if (existingOtherUserWithdrawal) {
+      const existingNotification = await AdminNotification.findOne({
+        type: "DUPLICATE_WITHDRAWAL_ADDRESS",
+        user: user._id,
+        relatedUser: existingOtherUserWithdrawal.user,
+        address: cleanAddress,
+        cryptoType,
+      }).session(session);
+    
+      if (!existingNotification) {
+        await createAdminNotification({
+          type: "DUPLICATE_WITHDRAWAL_ADDRESS",
+          title: "Duplicate withdrawal address detected",
+          message: `A withdrawal address is being used by more than one user for ${cryptoType}.`,
+          user: user._id,
+          relatedUser: existingOtherUserWithdrawal.user,
+          address: cleanAddress,
+          cryptoType,
+          session,
+        });
+      }
+    }
+
     const balanceBefore = Number(user.balance || 0);
 
     if (balanceBefore < amount) {
@@ -297,7 +360,7 @@ exports.createWithdrawal = async (req, res) => {
           user: user._id,
           amount,
           cryptoType,
-          address: address.trim(),
+          address: cleanAddress,
           status: "PENDING",
           balanceBefore,
           balanceAfter: user.balance,
