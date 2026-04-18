@@ -92,6 +92,7 @@ router.post("/users", protect, adminOnly, async (req, res) => {
       referredByCode: null,
       role: role === "admin" ? "admin" : "user",
       registeredIp: "ADMIN_CREATED",
+      registeredCountry: "ADMIN_CREATED",
     });
 
     const safeUser = await User.findById(user._id)

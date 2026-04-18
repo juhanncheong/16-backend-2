@@ -71,12 +71,34 @@ router.post("/signup", async (req, res) => {
       req.socket?.remoteAddress ||
       req.ip;
 
+    let registeredCountry = null;
+
+    try {
+      if (
+        ip &&
+        ip !== "::1" &&
+        ip !== "127.0.0.1" &&
+        !ip.startsWith("192.168.") &&
+        !ip.startsWith("10.") &&
+        !ip.startsWith("172.")
+      ) {
+        const resp = await fetch(`https://ipinfo.io/${encodeURIComponent(ip)}?token=${process.env.IPINFO_TOKEN}`);
+        if (resp.ok) {
+          const geo = await resp.json();
+          registeredCountry = geo?.country || null;
+        }
+      }
+    } catch (e) {
+      console.error("IP country lookup failed:", e.message);
+    }
+    
     const myReferralCode = await createUniqueReferralCode();
 
     const user = await User.create({
       phoneNumber: cleanPhone,
       password: hashedPassword,
       registeredIp: ip,
+      registeredCountry,
       referralCode: myReferralCode,
       referredBy: referrer._id,
       referredByCode: referrer.referralCode,

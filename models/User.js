@@ -19,6 +19,7 @@ const userSchema = new mongoose.Schema(
     signinRewardEnabledBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     lastOnlineAt: { type: Date, default: null },
     registeredIp: { type: String, default: null, trim: true },
+    registeredCountry: { type: String, default: null, trim: true },
     isBanned: { type: Boolean, default: false },
     bannedAt: { type: Date, default: null },
     banReason: { type: String, default: "" },
