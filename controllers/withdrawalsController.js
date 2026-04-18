@@ -372,7 +372,7 @@ exports.createWithdrawal = async (req, res) => {
     await createAdminNotification({
       type: "NEW_WITHDRAWAL",
       title: "New withdrawal submitted",
-      message: `User ${user.uid || user.phoneNumber || user._id} submitted a ${cryptoType} withdrawal of ${amount}.`,
+      message: `${cryptoType} withdrawal of ${amount} submitted.`,
       user: user._id,
       address: cleanAddress,
       cryptoType,
