@@ -19,6 +19,8 @@ const SigninClaim = require("../models/SigninClaim");
 const UserOrder = require("../models/UserOrder");
 const SigninRewardRule = require("../models/SigninRewardRule");
 const Content = require("../models/Content");
+const AdminPopup = require("../models/AdminPopup");
+const AdminPopupUserState = require("../models/AdminPopupUserState");
 
 const router = express.Router();
 
@@ -1405,6 +1407,165 @@ router.get("/bonus-history", protect, adminOnly, async (req, res) => {
       ok: false,
       message: err.message || "Server error",
     });
+  }
+});
+
+router.post("/popups", protect, adminOnly, async (req, res) => {
+  try {
+    const { title, message, targetType, targetUsers, isActive } = req.body || {};
+
+    if (!title || !String(title).trim()) {
+      return res.status(400).json({ ok: false, message: "title is required" });
+    }
+
+    if (!message || !String(message).trim()) {
+      return res.status(400).json({ ok: false, message: "message is required" });
+    }
+
+    const cleanTargetType = targetType === "specific" ? "specific" : "all";
+
+    let cleanTargetUsers = [];
+    if (cleanTargetType === "specific") {
+      if (!Array.isArray(targetUsers) || targetUsers.length === 0) {
+        return res.status(400).json({
+          ok: false,
+          message: "targetUsers is required when targetType is specific",
+        });
+      }
+
+      cleanTargetUsers = [...new Set(targetUsers.map(String))];
+    }
+
+    const popup = await AdminPopup.create({
+      title: String(title).trim(),
+      message: String(message).trim(),
+      targetType: cleanTargetType,
+      targetUsers: cleanTargetUsers,
+      isActive: typeof isActive === "boolean" ? isActive : true,
+      createdBy: req.user.userId,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      message: "✅ Popup created",
+      popup,
+    });
+  } catch (err) {
+    console.error("create popup error:", err);
+    return res.status(500).json({ ok: false, message: err.message || "Server error" });
+  }
+});
+
+router.get("/popups", protect, adminOnly, async (req, res) => {
+  try {
+    const popups = await AdminPopup.find()
+      .populate("targetUsers", "_id uid phoneNumber")
+      .populate("createdBy", "_id uid phoneNumber role")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.json({ ok: true, popups });
+  } catch (err) {
+    console.error("list popups error:", err);
+    return res.status(500).json({ ok: false, message: err.message || "Server error" });
+  }
+});
+
+router.put("/popups/:id", protect, adminOnly, async (req, res) => {
+  try {
+    const { title, message, targetType, targetUsers, isActive } = req.body || {};
+
+    const popup = await AdminPopup.findById(req.params.id);
+    if (!popup) {
+      return res.status(404).json({ ok: false, message: "Popup not found" });
+    }
+
+    if (title !== undefined) {
+      if (!String(title).trim()) {
+        return res.status(400).json({ ok: false, message: "title cannot be empty" });
+      }
+      popup.title = String(title).trim();
+    }
+
+    if (message !== undefined) {
+      if (!String(message).trim()) {
+        return res.status(400).json({ ok: false, message: "message cannot be empty" });
+      }
+      popup.message = String(message).trim();
+    }
+
+    if (targetType !== undefined) {
+      popup.targetType = targetType === "specific" ? "specific" : "all";
+    }
+
+    if (popup.targetType === "specific") {
+      if (!Array.isArray(targetUsers) || targetUsers.length === 0) {
+        return res.status(400).json({
+          ok: false,
+          message: "targetUsers is required when targetType is specific",
+        });
+      }
+      popup.targetUsers = [...new Set(targetUsers.map(String))];
+    } else {
+      popup.targetUsers = [];
+    }
+
+    if (typeof isActive === "boolean") {
+      popup.isActive = isActive;
+    }
+
+    await popup.save();
+
+    return res.json({
+      ok: true,
+      message: "✅ Popup updated",
+      popup,
+    });
+  } catch (err) {
+    console.error("update popup error:", err);
+    return res.status(500).json({ ok: false, message: err.message || "Server error" });
+  }
+});
+
+router.delete("/popups/:id", protect, adminOnly, async (req, res) => {
+  try {
+    const popup = await AdminPopup.findByIdAndDelete(req.params.id);
+    if (!popup) {
+      return res.status(404).json({ ok: false, message: "Popup not found" });
+    }
+
+    await AdminPopupUserState.deleteMany({ popupId: popup._id });
+
+    return res.json({
+      ok: true,
+      message: "✅ Popup deleted",
+    });
+  } catch (err) {
+    console.error("delete popup error:", err);
+    return res.status(500).json({ ok: false, message: err.message || "Server error" });
+  }
+});
+
+router.patch("/popups/:id/active", protect, adminOnly, async (req, res) => {
+  try {
+    const { isActive } = req.body || {};
+
+    const popup = await AdminPopup.findById(req.params.id);
+    if (!popup) {
+      return res.status(404).json({ ok: false, message: "Popup not found" });
+    }
+
+    popup.isActive = Boolean(isActive);
+    await popup.save();
+
+    return res.json({
+      ok: true,
+      message: `✅ Popup ${popup.isActive ? "activated" : "deactivated"}`,
+      popup,
+    });
+  } catch (err) {
+    console.error("toggle popup active error:", err);
+    return res.status(500).json({ ok: false, message: err.message || "Server error" });
   }
 });
 

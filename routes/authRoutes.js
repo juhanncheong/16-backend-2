@@ -6,6 +6,8 @@ const mongoose = require("mongoose");
 const { getLedgerTotal } = require("../utils/balance");
 const UserOrder = require("../models/UserOrder");
 const VipConfig = require("../models/VipConfig");
+const AdminPopup = require("../models/AdminPopup");
+const AdminPopupUserState = require("../models/AdminPopupUserState");
 
 const router = express.Router();
 const jwt = require("jsonwebtoken");
@@ -313,6 +315,91 @@ router.post("/change-password", protect, async (req, res) => {
     return res.status(500).json({
       message: "Server error",
     });
+  }
+});
+
+router.get("/popup/current", protect, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const now = new Date();
+
+    const popups = await AdminPopup.find({
+      isActive: true,
+      $or: [
+        { targetType: "all" },
+        { targetType: "specific", targetUsers: userId },
+      ],
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    if (!popups.length) {
+      return res.json({ ok: true, popup: null });
+    }
+
+    for (const popup of popups) {
+      const state = await AdminPopupUserState.findOne({
+        popupId: popup._id,
+        userId,
+      }).lean();
+
+      if (!state || !state.hiddenUntil || new Date(state.hiddenUntil) <= now) {
+        return res.json({
+          ok: true,
+          popup: {
+            _id: popup._id,
+            title: popup.title,
+            message: popup.message,
+            targetType: popup.targetType,
+            createdAt: popup.createdAt,
+          },
+        });
+      }
+    }
+
+    return res.json({ ok: true, popup: null });
+  } catch (err) {
+    console.error("get current popup error:", err);
+    return res.status(500).json({ ok: false, message: err.message || "Server error" });
+  }
+});
+
+router.post("/popup/:popupId/hide", protect, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { popupId } = req.params;
+
+    const popup = await AdminPopup.findById(popupId).lean();
+    if (!popup || !popup.isActive) {
+      return res.status(404).json({ ok: false, message: "Popup not found" });
+    }
+
+    const isAllowed =
+      popup.targetType === "all" ||
+      (popup.targetType === "specific" &&
+        Array.isArray(popup.targetUsers) &&
+        popup.targetUsers.some((id) => String(id) === String(userId)));
+
+    if (!isAllowed) {
+      return res.status(403).json({ ok: false, message: "Not allowed for this popup" });
+    }
+
+    const hiddenUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    const state = await AdminPopupUserState.findOneAndUpdate(
+      { popupId, userId },
+      { $set: { hiddenUntil } },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    return res.json({
+      ok: true,
+      message: "✅ Popup hidden for 24 hours",
+      hiddenUntil: state.hiddenUntil,
+    });
+  } catch (err) {
+    console.error("hide popup error:", err);
+    return res.status(500).json({ ok: false, message: err.message || "Server error" });
   }
 });
 
