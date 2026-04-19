@@ -72,7 +72,7 @@ router.post("/signup", async (req, res) => {
       req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
       req.socket?.remoteAddress ||
       req.ip;
-
+    
     let registeredCountry = null;
 
     try {
@@ -84,10 +84,16 @@ router.post("/signup", async (req, res) => {
         !ip.startsWith("10.") &&
         !ip.startsWith("172.")
       ) {
-        const resp = await fetch(`https://ipinfo.io/${encodeURIComponent(ip)}?token=${process.env.IPINFO_TOKEN}`);
+        const resp = await fetch(
+          `https://api.ipinfo.io/lite/${encodeURIComponent(ip)}?token=${process.env.IPINFO_TOKEN}`
+        );
+    
         if (resp.ok) {
           const geo = await resp.json();
-          registeredCountry = geo?.country || null;
+          registeredCountry = geo?.country || geo?.country_code || null;
+        } else {
+          const text = await resp.text();
+          console.log("IPinfo Lite failed:", resp.status, ip, text);
         }
       }
     } catch (e) {
