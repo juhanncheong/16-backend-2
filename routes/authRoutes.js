@@ -90,7 +90,17 @@ router.post("/signup", async (req, res) => {
     
         if (resp.ok) {
           const geo = await resp.json();
-          registeredCountry = geo?.country || geo?.country_code || null;
+    
+          const rawCountry =
+            geo?.country_code ||
+            geo?.country ||
+            null;
+    
+          const normalized = String(rawCountry || "").trim().toUpperCase();
+    
+          registeredCountry = /^[A-Z]{2}$/.test(normalized)
+            ? normalized
+            : null;
         } else {
           const text = await resp.text();
           console.log("IPinfo Lite failed:", resp.status, ip, text);
