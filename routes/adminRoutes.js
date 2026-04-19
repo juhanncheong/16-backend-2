@@ -491,6 +491,142 @@ router.get("/users/:id/wallet-summary", protect, adminOnly, async (req, res) => 
   }
 });
 
+router.get("/trial-users", protect, adminOnly, async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page || "1", 10));
+    const limit = Math.max(1, parseInt(req.query.limit || "10", 10));
+    const q = String(req.query.q || "").trim();
+
+    const skip = (page - 1) * limit;
+
+    const userMatch = {};
+    if (q) {
+      userMatch.$or = [
+        { uid: { $regex: q, $options: "i" } },
+        { phoneNumber: { $regex: q, $options: "i" } },
+      ];
+    }
+
+    const pipeline = [
+      {
+        $match: {
+          type: { $in: ["TRIAL_CREDIT", "TRIAL_REVERSAL"] },
+        },
+      },
+      {
+        $group: {
+          _id: "$userId",
+          creditedRaw: {
+            $sum: {
+              $cond: [{ $eq: ["$type", "TRIAL_CREDIT"] }, "$amount", 0],
+            },
+          },
+          reversedRaw: {
+            $sum: {
+              $cond: [{ $eq: ["$type", "TRIAL_REVERSAL"] }, "$amount", 0],
+            },
+          },
+          lastCreditAt: {
+            $max: {
+              $cond: [{ $eq: ["$type", "TRIAL_CREDIT"] }, "$createdAt", null],
+            },
+          },
+          lastReversalAt: {
+            $max: {
+              $cond: [{ $eq: ["$type", "TRIAL_REVERSAL"] }, "$createdAt", null],
+            },
+          },
+        },
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id",
+          foreignField: "_id",
+          as: "user",
+        },
+      },
+      { $unwind: "$user" },
+      ...(q ? [{ $match: userMatch }] : []),
+      {
+        $project: {
+          _id: 0,
+          userId: "$user._id",
+          uid: { $ifNull: ["$user.uid", "-"] },
+          phoneNumber: { $ifNull: ["$user.phoneNumber", "-"] },
+          credited: { $ifNull: ["$creditedRaw", 0] },
+          reversed: { $abs: { $ifNull: ["$reversedRaw", 0] } },
+          remaining: {
+            $max: [
+              0,
+              {
+                $subtract: [
+                  { $ifNull: ["$creditedRaw", 0] },
+                  { $abs: { $ifNull: ["$reversedRaw", 0] } },
+                ],
+              },
+            ],
+          },
+          lastCreditAt: 1,
+          lastReversalAt: 1,
+          hasTrial: {
+            $gt: [{ $ifNull: ["$creditedRaw", 0] }, 0],
+          },
+          isFullyRevoked: {
+            $and: [
+              { $gt: [{ $ifNull: ["$creditedRaw", 0] }, 0] },
+              {
+                $lte: [
+                  {
+                    $max: [
+                      0,
+                      {
+                        $subtract: [
+                          { $ifNull: ["$creditedRaw", 0] },
+                          { $abs: { $ifNull: ["$reversedRaw", 0] } },
+                        ],
+                      },
+                    ],
+                  },
+                  0,
+                ],
+              },
+            ],
+          },
+        },
+      },
+      { $sort: { lastCreditAt: -1, lastReversalAt: -1, uid: 1 } },
+    ];
+
+    const countPipeline = [...pipeline, { $count: "total" }];
+    const rowsPipeline = [...pipeline, { $skip: skip }, { $limit: limit }];
+
+    const [rows, countResult] = await Promise.all([
+      WalletTransaction.aggregate(rowsPipeline),
+      WalletTransaction.aggregate(countPipeline),
+    ]);
+
+    const total = Number(countResult[0]?.total || 0);
+
+    return res.json({
+      ok: true,
+      rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    });
+  } catch (err) {
+    console.error("trial-users error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
 // ✅ Admin trial summary (credited / reversed / remaining)
 router.get("/users/:id/trial-summary", protect, adminOnly, async (req, res) => {
   try {
