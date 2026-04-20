@@ -1,9 +1,11 @@
 const express = require("express");
 const router = express.Router();
-const chatDB = require("../chatDB");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
+
+const ChatMessage = require("../models/ChatMessage");
+const AdminNote = require("../models/AdminNote");
 
 /**
  * upload folder
@@ -19,8 +21,11 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname || "");
     const safeExt = ext || ".jpg";
-    cb(null, `chat_${Date.now()}_${Math.random().toString(16).slice(2)}${safeExt}`);
-  }
+    cb(
+      null,
+      `chat_${Date.now()}_${Math.random().toString(16).slice(2)}${safeExt}`
+    );
+  },
 });
 
 const upload = multer({
@@ -31,82 +36,46 @@ const upload = multer({
       return cb(new Error("Only image files are allowed"));
     }
     cb(null, true);
-  }
+  },
 });
-
-/**
- * one-time: create admin_notes table
- */
-chatDB
-  .prepare(`
-    CREATE TABLE IF NOT EXISTS admin_notes (
-      userId TEXT PRIMARY KEY,
-      nickname TEXT,
-      updatedAt TEXT
-    )
-  `)
-  .run();
-
-/**
- * helper
- */
-function safeGetConversations() {
-  try {
-    const rows = chatDB
-      .prepare(`
-        SELECT 
-          userId,
-          MAX(createdAt) AS lastTime,
-          (
-            SELECT message
-            FROM chat_messages m2
-            WHERE m2.userId = chat_messages.userId
-            ORDER BY id DESC
-            LIMIT 1
-          ) AS lastMessage
-        FROM chat_messages
-        GROUP BY userId
-        ORDER BY lastTime DESC
-      `)
-      .all();
-
-    return rows || [];
-  } catch (e) {
-    console.error("safeGetConversations error:", e);
-    return [];
-  }
-}
 
 /**
  * admin: list conversations
  */
-router.get("/conversations", (req, res) => {
+router.get("/conversations", async (req, res) => {
   try {
-    const rows = chatDB
-      .prepare(`
-        SELECT 
-          userId,
-          (
-            SELECT message
-            FROM chat_messages m2
-            WHERE m2.userId = m.userId
-            ORDER BY id DESC
-            LIMIT 1
-          ) AS lastMessage,
-          (
-            SELECT createdAt
-            FROM chat_messages m2
-            WHERE m2.userId = m.userId
-            ORDER BY id DESC
-            LIMIT 1
-          ) AS lastTime
-        FROM chat_messages m
-        GROUP BY userId
-        ORDER BY MAX(id) DESC
-      `)
-      .all();
+    const rows = await ChatMessage.aggregate([
+      { $sort: { createdAt: -1, _id: -1 } },
+      {
+        $group: {
+          _id: "$userId",
+          lastMessage: { $first: "$message" },
+          lastTime: { $first: "$createdAt" },
+          lastType: { $first: "$type" },
+          imageUrl: { $first: "$imageUrl" },
+          fileName: { $first: "$fileName" },
+          sender: { $first: "$sender" },
+          status: { $first: "$status" },
+        },
+      },
+      { $sort: { lastTime: -1 } },
+    ]);
 
-    res.json({ conversations: rows || [] });
+    const conversations = rows.map((row) => ({
+      userId: row._id,
+      lastMessage:
+        row.lastType === "image"
+          ? row.lastMessage || "Image"
+          : row.lastMessage || "",
+      lastTime: row.lastTime,
+      type: row.lastType || "text",
+      imageUrl: row.imageUrl || "",
+      fileName: row.fileName || "",
+      sender: row.sender || "",
+      status: row.status || "sent",
+    }));
+
+    res.json({ conversations });
   } catch (err) {
     console.error("chat conversations error:", err);
     res.status(500).json({ message: "Failed to fetch conversations" });
@@ -116,20 +85,27 @@ router.get("/conversations", (req, res) => {
 /**
  * get messages for a user
  */
-router.get("/messages/:userId", (req, res) => {
+router.get("/messages/:userId", async (req, res) => {
   try {
-    const userId = req.params.userId;
+    const userId = String(req.params.userId || "").trim();
 
-    const rows = chatDB
-      .prepare(`
-        SELECT id, sender, message, createdAt, status, type, imageUrl, fileName
-        FROM chat_messages
-        WHERE userId = ?
-        ORDER BY id ASC
-      `)
-      .all(userId);
+    const rows = await ChatMessage.find({ userId })
+      .sort({ createdAt: 1, _id: 1 })
+      .lean();
 
-    res.json({ messages: rows || [] });
+    const messages = rows.map((row) => ({
+      id: String(row._id),
+      userId: row.userId,
+      sender: row.sender,
+      message: row.message || "",
+      createdAt: row.createdAt,
+      status: row.status || "sent",
+      type: row.type || "text",
+      imageUrl: row.imageUrl || "",
+      fileName: row.fileName || "",
+    }));
+
+    res.json({ messages });
   } catch (err) {
     console.error("chat messages error:", err);
     res.status(500).json({ message: "Failed to fetch messages" });
@@ -144,7 +120,7 @@ router.get("/messages/:userId", (req, res) => {
  * - sender (optional, default user)
  * - message (optional caption)
  */
-router.post("/upload", upload.single("image"), (req, res) => {
+router.post("/upload", upload.single("image"), async (req, res) => {
   try {
     const userId = String(req.body.userId || "").trim();
     const sender = String(req.body.sender || "user").trim();
@@ -158,36 +134,33 @@ router.post("/upload", upload.single("image"), (req, res) => {
       return res.status(400).json({ message: "Image file is required" });
     }
 
-    const createdAt = new Date().toISOString();
+    const createdAt = new Date();
     const imageUrl = `/uploads/chat/${req.file.filename}`;
 
-    const result = chatDB.prepare(`
-      INSERT INTO chat_messages (userId, sender, message, createdAt, type, imageUrl, fileName, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    const saved = await ChatMessage.create({
       userId,
       sender,
       message,
       createdAt,
-      "image",
+      status: "sent",
+      type: "image",
       imageUrl,
-      req.file.originalname || "",
-      "sent"
-    );
+      fileName: req.file.originalname || "",
+    });
 
     return res.json({
       success: true,
       messageData: {
-        id: result.lastInsertRowid,
-        userId,
-        sender,
-        message,
-        createdAt,
-        status: "sent",
-        type: "image",
-        imageUrl,
-        fileName: req.file.originalname || ""
-      }
+        id: String(saved._id),
+        userId: saved.userId,
+        sender: saved.sender,
+        message: saved.message || "",
+        createdAt: saved.createdAt,
+        status: saved.status || "sent",
+        type: saved.type || "image",
+        imageUrl: saved.imageUrl || "",
+        fileName: saved.fileName || "",
+      },
     });
   } catch (err) {
     console.error("chat upload error:", err);
@@ -198,13 +171,11 @@ router.post("/upload", upload.single("image"), (req, res) => {
 /**
  * admin-only nickname get
  */
-router.get("/admin-nickname/:userId", (req, res) => {
+router.get("/admin-nickname/:userId", async (req, res) => {
   try {
-    const userId = req.params.userId;
+    const userId = String(req.params.userId || "").trim();
 
-    const row = chatDB
-      .prepare(`SELECT userId, nickname, updatedAt FROM admin_notes WHERE userId = ?`)
-      .get(userId);
+    const row = await AdminNote.findOne({ userId }).lean();
 
     res.json({ nickname: row?.nickname || "" });
   } catch (err) {
@@ -216,21 +187,19 @@ router.get("/admin-nickname/:userId", (req, res) => {
 /**
  * admin-only nickname patch
  */
-router.patch("/admin-nickname/:userId", (req, res) => {
+router.patch("/admin-nickname/:userId", async (req, res) => {
   try {
-    const userId = req.params.userId;
-    const nickname = String(req.body?.nickname || "").trim().slice(0, 40);
-    const updatedAt = new Date().toISOString();
+    const userId = String(req.params.userId || "").trim();
+    const nickname = String(req.body?.nickname || "")
+      .trim()
+      .slice(0, 40);
+    const updatedAt = new Date();
 
-    chatDB
-      .prepare(`
-        INSERT INTO admin_notes (userId, nickname, updatedAt)
-        VALUES (?, ?, ?)
-        ON CONFLICT(userId) DO UPDATE SET
-          nickname = excluded.nickname,
-          updatedAt = excluded.updatedAt
-      `)
-      .run(userId, nickname, updatedAt);
+    await AdminNote.findOneAndUpdate(
+      { userId },
+      { userId, nickname, updatedAt },
+      { upsert: true, new: true }
+    );
 
     res.json({ userId, nickname, updatedAt });
   } catch (err) {

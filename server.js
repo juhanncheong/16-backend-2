@@ -22,7 +22,7 @@ const adminNotificationsRoutes = require("./routes/adminNotificationsRoutes");
 
 const http = require("http");
 const { Server } = require("socket.io");
-const chatDB = require("./chatDB");
+const ChatMessage = require("./models/ChatMessage");
 
 dotenv.config();
 
@@ -90,85 +90,103 @@ async function startServer() {
     });
 
     // user sends text message
-    socket.on("user:message", ({ userId, message, tempId }) => {
-      const msg = String(message || "").trim();
-      if (!userId || !msg) return;
-
-      const createdAt = new Date().toISOString();
-
-      chatDB.prepare(`
-        INSERT INTO chat_messages (userId, sender, message, createdAt, type)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(userId, "user", msg, createdAt, "text");
-
-      io.to(`user:${userId}`).emit("chat:delivered", { tempId });
-
-      io.to("admins").emit("chat:newMessage", {
-        userId,
-        sender: "user",
-        message: msg,
-        createdAt,
-        type: "text",
-      });
+    socket.on("user:message", async ({ userId, message, tempId }) => {
+      try {
+        const msg = String(message || "").trim();
+        if (!userId || !msg) return;
+    
+        const saved = await ChatMessage.create({
+          userId,
+          sender: "user",
+          message: msg,
+          createdAt: new Date(),
+          type: "text",
+          status: "sent",
+        });
+    
+        io.to(`user:${userId}`).emit("chat:delivered", { tempId });
+    
+        io.to("admins").emit("chat:newMessage", {
+          id: saved._id.toString(),
+          userId,
+          sender: "user",
+          message: msg,
+          createdAt: saved.createdAt,
+          type: "text",
+          status: "sent",
+        });
+      } catch (err) {
+        console.error("user:message error", err);
+      }
     });
 
     socket.on("chat:imageSent", (msg) => {
-      if (!msg || !msg.userId) return;
-
-      const payload = {
-        id: msg.id,
-        userId: msg.userId,
-        sender: msg.sender || "user",
-        message: msg.message || "",
-        createdAt: msg.createdAt,
-        status: msg.status || "sent",
-        type: msg.type || "image",
-        imageUrl: msg.imageUrl || "",
-        fileName: msg.fileName || ""
-      };
-
-      io.to("admins").emit("chat:newMessage", payload);
-      io.to(`user:${msg.userId}`).emit("chat:newMessage", payload);
+      try {
+        if (!msg || !msg.userId) return;
+    
+        const payload = {
+          id: msg.id,
+          userId: msg.userId,
+          sender: msg.sender || "user",
+          message: msg.message || "",
+          createdAt: msg.createdAt,
+          status: msg.status || "sent",
+          type: msg.type || "image",
+          imageUrl: msg.imageUrl || "",
+          fileName: msg.fileName || "",
+        };
+    
+        io.to("admins").emit("chat:newMessage", payload);
+        io.to(`user:${msg.userId}`).emit("chat:newMessage", payload);
+      } catch (err) {
+        console.error("chat:imageSent error", err);
+      }
     });
 
     // admin sends text message
-    socket.on("admin:message", ({ userId, message, clientId }) => {
-      const msg = String(message || "").trim();
-      if (!userId || !msg) return;
-
-      const createdAt = new Date().toISOString();
-
-      const result = chatDB.prepare(`
-        INSERT INTO chat_messages (userId, sender, message, createdAt, type)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(userId, "admin", msg, createdAt, "text");
-
-      io.to("admins").emit("chat:status", {
-        clientId,
-        messageId: result.lastInsertRowid,
-        status: "sent",
-      });
-
-      io.to(`user:${userId}`).emit("chat:newMessage", {
-        id: result.lastInsertRowid,
-        userId,
-        sender: "admin",
-        message: msg,
-        createdAt,
-        status: "sent",
-        type: "text",
-      });
-
-      io.to("admins").emit("chat:newMessage", {
-        id: result.lastInsertRowid,
-        clientId,
-        userId,
-        sender: "admin",
-        message: msg,
-        createdAt,
-        status: "sent",
-        type: "text",
-      });
+    socket.on("admin:message", async ({ userId, message, clientId }) => {
+      try {
+        const msg = String(message || "").trim();
+        if (!userId || !msg) return;
+    
+        const saved = await ChatMessage.create({
+          userId,
+          sender: "admin",
+          message: msg,
+          createdAt: new Date(),
+          type: "text",
+          status: "sent",
+        });
+    
+        io.to("admins").emit("chat:status", {
+          clientId,
+          messageId: saved._id.toString(),
+          status: "sent",
+        });
+    
+        io.to(`user:${userId}`).emit("chat:newMessage", {
+          id: saved._id.toString(),
+          userId,
+          sender: "admin",
+          message: msg,
+          createdAt: saved.createdAt,
+          status: "sent",
+          type: "text",
+        });
+    
+        io.to("admins").emit("chat:newMessage", {
+          id: saved._id.toString(),
+          clientId,
+          userId,
+          sender: "admin",
+          message: msg,
+          createdAt: saved.createdAt,
+          status: "sent",
+          type: "text",
+        });
+      } catch (err) {
+        console.error("admin:message error", err);
+      }
     });
 
     socket.on("disconnect", () => {
