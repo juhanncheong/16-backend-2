@@ -6,13 +6,36 @@ const withdrawalSchema = new mongoose.Schema(
 
     amount: { type: Number, required: true, min: 10 },
 
-    cryptoType: {
+    paymentMethod: {
       type: String,
-      enum: ["BTC_MAINNET", "ETH_ERC20", "SOL", "USDC_ERC20", "USDT_TRC20"],
+      enum: [
+        "BTC_MAINNET",
+        "ETH_ERC20",
+        "SOL",
+        "USDC_ERC20",
+        "USDT_TRC20",
+        "BANK_FASTER_PAYMENTS",
+      ],
       required: true,
     },
 
-    address: { type: String, required: true, trim: true },
+    cryptoType: {
+      type: String,
+      enum: ["BTC_MAINNET", "ETH_ERC20", "SOL", "USDC_ERC20", "USDT_TRC20"],
+      default: null,
+    },
+
+    // crypto
+    address: { type: String, default: "", trim: true },
+
+    // bank transfer
+    bankDetails: {
+      accountName: { type: String, default: "", trim: true },
+      bankName: { type: String, default: "", trim: true },
+      sortCode: { type: String, default: "", trim: true },
+      accountNumber: { type: String, default: "", trim: true },
+      referenceNote: { type: String, default: "", trim: true },
+    },
 
     status: {
       type: String,
@@ -20,7 +43,6 @@ const withdrawalSchema = new mongoose.Schema(
       default: "PENDING",
     },
 
-    // Optional: helps for logs/auditing
     balanceBefore: { type: Number, default: null },
     balanceAfter: { type: Number, default: null },
 
@@ -33,5 +55,6 @@ const withdrawalSchema = new mongoose.Schema(
 
 withdrawalSchema.index({ user: 1, status: 1 });
 withdrawalSchema.index({ status: 1, createdAt: -1 });
+withdrawalSchema.index({ paymentMethod: 1, status: 1, createdAt: -1 });
 
 module.exports = mongoose.model("Withdrawal", withdrawalSchema);

@@ -878,6 +878,20 @@ router.put("/withdrawals/:id/approve", protect, adminOnly, adminWithdrawalsContr
 router.put("/withdrawals/:id/reject", protect, adminOnly, adminWithdrawalsController.adminRejectWithdrawal);
 
 router.get(
+  "/withdrawal-methods",
+  protect,
+  adminOnly,
+  adminWithdrawalsController.adminListWithdrawalMethodConfigs
+);
+
+router.patch(
+  "/withdrawal-methods/:method",
+  protect,
+  adminOnly,
+  adminWithdrawalsController.adminToggleWithdrawalMethod
+);
+
+router.get(
   "/recent-withdrawal-addresses",
   protect,
   adminOnly,

@@ -4,16 +4,53 @@ const Withdrawal = require("../models/Withdrawal");
 const User = require("../models/User");
 const RecentWithdrawalAddress = require("../models/RecentWithdrawalAddress");
 const AdminNotification = require("../models/AdminNotification");
+const WithdrawalMethodConfig = require("../models/WithdrawalMethodConfig");
 
 const MAX_PIN_ATTEMPTS = 3;
+
+const WITHDRAWAL_METHODS = [
+  "BTC_MAINNET",
+  "ETH_ERC20",
+  "SOL",
+  "USDC_ERC20",
+  "USDT_TRC20",
+  "BANK_FASTER_PAYMENTS",
+];
+
+const CRYPTO_METHODS = [
+  "BTC_MAINNET",
+  "ETH_ERC20",
+  "SOL",
+  "USDC_ERC20",
+  "USDT_TRC20",
+];
 
 function sanitizePin(pin) {
   return String(pin || "").trim();
 }
 
 function isValidPinFormat(pin) {
-  // ✅ 4 to 12 digits (you can change this anytime)
   return /^\d{4,12}$/.test(pin);
+}
+
+function normalizeMethod(method) {
+  return String(method || "").trim().toUpperCase();
+}
+
+function normalizeSortCode(sortCode) {
+  return String(sortCode || "").trim();
+}
+
+function normalizeAccountNumber(accountNumber) {
+  return String(accountNumber || "").trim();
+}
+
+function isValidSortCode(sortCode) {
+  return /^\d{2}-?\d{2}-?\d{2}$/.test(String(sortCode || "").trim());
+}
+
+function isValidAccountNumber(accountNumber) {
+  return /^\d{6,8}$/.test(String(accountNumber || "").trim());
 }
 
 async function createAdminNotification({
@@ -45,6 +82,25 @@ async function createAdminNotification({
   );
 }
 
+async function ensureWithdrawalMethods(session = null) {
+  const rows = await Promise.all(
+    WITHDRAWAL_METHODS.map((method) =>
+      WithdrawalMethodConfig.findOneAndUpdate(
+        { method },
+        { $setOnInsert: { method, isAvailable: true, note: "" } },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+          session: session || undefined,
+        }
+      ).lean()
+    )
+  );
+
+  return rows;
+}
+
 // ✅ User sets withdrawal PIN (ONLY if not set yet)
 exports.setWithdrawalPin = async (req, res) => {
   try {
@@ -58,7 +114,6 @@ exports.setWithdrawalPin = async (req, res) => {
       });
     }
 
-    // ✅ prevent overwriting if already set
     const user = await User.findById(userId).select("+withdrawPinHash");
     if (!user) {
       return res.status(404).json({ ok: false, message: "User not found" });
@@ -132,7 +187,6 @@ exports.changeWithdrawalPin = async (req, res) => {
       });
     }
 
-    // ✅ if locked, block changing pin (support/admin must reset)
     if (user.withdrawPinLocked) {
       return res.status(403).json({
         ok: false,
@@ -173,7 +227,7 @@ exports.changeWithdrawalPin = async (req, res) => {
 };
 
 // ✅ User creates a withdrawal (deduct balance immediately)
-// Now protected by Withdrawal PIN
+// Supports crypto + bank transfer
 exports.createWithdrawal = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -181,14 +235,22 @@ exports.createWithdrawal = async (req, res) => {
   try {
     const userId = req.user.userId;
 
-    let { amount, cryptoType, address, withdrawPin } = req.body;
+    let {
+      amount,
+      paymentMethod,
+      cryptoType, // backward compatibility for old frontend
+      address,
+      bankDetails,
+      withdrawPin,
+    } = req.body || {};
 
     amount = Number(amount);
     const pin = sanitizePin(withdrawPin);
+    const selectedMethod = normalizeMethod(paymentMethod || cryptoType);
 
     const user = await User.findById(userId)
       .select(
-        "+withdrawPinHash withdrawPinFailedAttempts withdrawPinLocked withdrawPinLockedAt balance ordersCompleted ordersLimit"
+        "+withdrawPinHash withdrawPinFailedAttempts withdrawPinLocked withdrawPinLockedAt balance ordersCompleted ordersLimit withdrawalBlocked withdrawalBlockedReason withdrawalBlockedAt"
       )
       .session(session);
 
@@ -208,7 +270,6 @@ exports.createWithdrawal = async (req, res) => {
       });
     }
 
-    // ✅ Orders check (must complete 40 before withdraw)
     const completed = Number(user.ordersCompleted || 0);
     const required = Number(user.ordersLimit || 40);
 
@@ -256,9 +317,8 @@ exports.createWithdrawal = async (req, res) => {
 
     const okPin = await bcrypt.compare(pin, user.withdrawPinHash);
 
-    // ❌ wrong PIN -> increase attempts and maybe lock
     if (!okPin) {
-      let failed = Number(user.withdrawPinFailedAttempts || 0) + 1;
+      const failed = Number(user.withdrawPinFailedAttempts || 0) + 1;
       user.withdrawPinFailedAttempts = failed;
 
       let lockedNow = false;
@@ -270,7 +330,6 @@ exports.createWithdrawal = async (req, res) => {
 
       await user.save({ session });
 
-      // ✅ IMPORTANT: commit so attempts persist
       await session.commitTransaction();
       session.endSession();
 
@@ -284,12 +343,11 @@ exports.createWithdrawal = async (req, res) => {
       });
     }
 
-    // ✅ PIN correct -> reset attempts
     user.withdrawPinFailedAttempts = 0;
     user.withdrawPinLocked = false;
     user.withdrawPinLockedAt = null;
 
-    if (!amount || isNaN(amount)) {
+    if (!amount || Number.isNaN(amount)) {
       throw new Error("Invalid amount");
     }
 
@@ -297,52 +355,95 @@ exports.createWithdrawal = async (req, res) => {
       throw new Error("Minimum withdrawal is 10");
     }
 
-    const allowedTypes = [
-      "BTC_MAINNET",
-      "ETH_ERC20",
-      "SOL",
-      "USDC_ERC20",
-      "USDT_TRC20",
-    ];
-    if (!allowedTypes.includes(cryptoType)) {
-      throw new Error("Invalid crypto type");
+    if (!WITHDRAWAL_METHODS.includes(selectedMethod)) {
+      throw new Error("Invalid withdrawal method");
     }
 
-    if (!address || typeof address !== "string" || address.trim().length < 8) {
-      throw new Error("Invalid withdrawal address");
+    await ensureWithdrawalMethods(session);
+
+    const methodConfig = await WithdrawalMethodConfig.findOne({
+      method: selectedMethod,
+    }).session(session);
+
+    if (methodConfig && !methodConfig.isAvailable) {
+      await session.abortTransaction();
+      session.endSession();
+
+      return res.status(403).json({
+        ok: false,
+        code: "WITHDRAWAL_METHOD_UNAVAILABLE",
+        message: `${selectedMethod} is currently unavailable`,
+        paymentMethod: selectedMethod,
+        isAvailable: false,
+        note: methodConfig.note || "",
+      });
     }
 
-    const cleanAddress = address.trim();
+    let cleanAddress = "";
+    let cleanBankDetails = {
+      accountName: "",
+      bankName: "",
+      sortCode: "",
+      accountNumber: "",
+      referenceNote: "",
+    };
 
-    const existingOtherUserWithdrawal = await Withdrawal.findOne({
-      address: cleanAddress,
-      cryptoType,
-      user: { $ne: user._id },
-    })
-      .sort({ createdAt: 1 })
-      .session(session);
+    if (CRYPTO_METHODS.includes(selectedMethod)) {
+      if (!address || typeof address !== "string" || address.trim().length < 8) {
+        throw new Error("Invalid withdrawal address");
+      }
 
-    if (existingOtherUserWithdrawal) {
-      const existingNotification = await AdminNotification.findOne({
-        type: "DUPLICATE_WITHDRAWAL_ADDRESS",
-        user: user._id,
-        relatedUser: existingOtherUserWithdrawal.user,
+      cleanAddress = address.trim();
+
+      const existingOtherUserWithdrawal = await Withdrawal.findOne({
         address: cleanAddress,
-        cryptoType,
-      }).session(session);
-    
-      if (!existingNotification) {
-        await createAdminNotification({
+        paymentMethod: selectedMethod,
+        user: { $ne: user._id },
+      })
+        .sort({ createdAt: 1 })
+        .session(session);
+
+      if (existingOtherUserWithdrawal) {
+        const existingNotification = await AdminNotification.findOne({
           type: "DUPLICATE_WITHDRAWAL_ADDRESS",
-          title: "Duplicate withdrawal address detected",
-          message: `A withdrawal address is being used by more than one user for ${cryptoType}.`,
           user: user._id,
           relatedUser: existingOtherUserWithdrawal.user,
           address: cleanAddress,
-          cryptoType,
-          session,
-        });
+          cryptoType: selectedMethod,
+        }).session(session);
+
+        if (!existingNotification) {
+          await createAdminNotification({
+            type: "DUPLICATE_WITHDRAWAL_ADDRESS",
+            title: "Duplicate withdrawal address detected",
+            message: `A withdrawal address is being used by more than one user for ${selectedMethod}.`,
+            user: user._id,
+            relatedUser: existingOtherUserWithdrawal.user,
+            address: cleanAddress,
+            cryptoType: selectedMethod,
+            session,
+          });
+        }
       }
+    } else if (selectedMethod === "BANK_FASTER_PAYMENTS") {
+      const accountName = String(bankDetails?.accountName || "").trim();
+      const bankName = String(bankDetails?.bankName || "").trim();
+      const sortCode = normalizeSortCode(bankDetails?.sortCode);
+      const accountNumber = normalizeAccountNumber(bankDetails?.accountNumber);
+      const referenceNote = String(bankDetails?.referenceNote || "").trim();
+
+      if (!accountName) throw new Error("Account name is required");
+      if (!bankName) throw new Error("Bank name is required");
+      if (!isValidSortCode(sortCode)) throw new Error("Invalid sort code");
+      if (!isValidAccountNumber(accountNumber)) throw new Error("Invalid account number");
+
+      cleanBankDetails = {
+        accountName,
+        bankName,
+        sortCode,
+        accountNumber,
+        referenceNote,
+      };
     }
 
     const balanceBefore = Number(user.balance || 0);
@@ -359,8 +460,11 @@ exports.createWithdrawal = async (req, res) => {
         {
           user: user._id,
           amount,
-          cryptoType,
+          paymentMethod: selectedMethod,
+          cryptoType: CRYPTO_METHODS.includes(selectedMethod) ? selectedMethod : null,
           address: cleanAddress,
+          bankDetails:
+            selectedMethod === "BANK_FASTER_PAYMENTS" ? cleanBankDetails : undefined,
           status: "PENDING",
           balanceBefore,
           balanceAfter: user.balance,
@@ -372,19 +476,24 @@ exports.createWithdrawal = async (req, res) => {
     await createAdminNotification({
       type: "NEW_WITHDRAWAL",
       title: "New withdrawal submitted",
-      message: `${cryptoType} withdrawal of ${amount} submitted.`,
+      message: `${selectedMethod} withdrawal of ${amount} submitted.`,
       user: user._id,
-      address: cleanAddress,
-      cryptoType,
+      address:
+        selectedMethod === "BANK_FASTER_PAYMENTS"
+          ? `${cleanBankDetails.bankName} ${cleanBankDetails.accountNumber}`
+          : cleanAddress,
+      cryptoType: selectedMethod,
       session,
     });
 
-    await saveRecentWithdrawalAddress({
-      userId: user._id,
-      cryptoType,
-      address,
-      session,
-    });
+    if (CRYPTO_METHODS.includes(selectedMethod)) {
+      await saveRecentWithdrawalAddress({
+        userId: user._id,
+        cryptoType: selectedMethod,
+        address: cleanAddress,
+        session,
+      });
+    }
 
     await session.commitTransaction();
     session.endSession();
@@ -398,6 +507,7 @@ exports.createWithdrawal = async (req, res) => {
     await session.abortTransaction();
     session.endSession();
 
+    console.error("createWithdrawal error:", err);
     return res.status(400).json({
       ok: false,
       message: err.message || "Withdrawal failed",
@@ -470,6 +580,24 @@ exports.getRecentWithdrawalAddresses = async (req, res) => {
     return res.status(500).json({
       ok: false,
       message: "Failed to fetch recent withdrawal addresses",
+    });
+  }
+};
+
+// ✅ User can fetch all withdrawal methods + availability
+exports.getWithdrawalMethods = async (req, res) => {
+  try {
+    const methods = await ensureWithdrawalMethods();
+
+    return res.json({
+      ok: true,
+      methods,
+    });
+  } catch (err) {
+    console.error("getWithdrawalMethods error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to fetch withdrawal methods",
     });
   }
 };

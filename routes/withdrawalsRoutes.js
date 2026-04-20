@@ -8,8 +8,10 @@ const {
   getRecentWithdrawalAddresses,
   setWithdrawalPin,
   changeWithdrawalPin,
+  getWithdrawalMethods,
 } = require("../controllers/withdrawalsController");
 
+router.get("/methods", protect, getWithdrawalMethods);
 router.post("/set-pin", protect, setWithdrawalPin);
 router.post("/change-pin", protect, changeWithdrawalPin);
 
