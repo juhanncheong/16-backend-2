@@ -2,6 +2,16 @@ const mongoose = require("mongoose");
 const Withdrawal = require("../models/Withdrawal");
 const User = require("../models/User");
 const RecentWithdrawalAddress = require("../models/RecentWithdrawalAddress");
+const WithdrawalMethodConfig = require("../models/WithdrawalMethodConfig");
+
+const WITHDRAWAL_METHODS = [
+  "BTC_MAINNET",
+  "ETH_ERC20",
+  "SOL",
+  "USDC_ERC20",
+  "USDT_TRC20",
+  "BANK_FASTER_PAYMENTS",
+];
 
 // ✅ Admin: list withdrawals (optional filters)
 exports.adminListWithdrawals = async (req, res) => {
@@ -20,6 +30,73 @@ exports.adminListWithdrawals = async (req, res) => {
     return res.json({ ok: true, withdrawals });
   } catch (err) {
     console.error("adminListWithdrawals error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+};
+
+exports.adminListWithdrawalMethodConfigs = async (req, res) => {
+  try {
+    const methods = await Promise.all(
+      WITHDRAWAL_METHODS.map((method) =>
+        WithdrawalMethodConfig.findOneAndUpdate(
+          { method },
+          {
+            $setOnInsert: {
+              method,
+              isAvailable: true,
+              note: "",
+              updatedBy: null,
+              updatedAt: null,
+            },
+          },
+          {
+            upsert: true,
+            new: true,
+            setDefaultsOnInsert: true,
+          }
+        ).lean()
+      )
+    );
+
+    return res.json({ ok: true, methods });
+  } catch (err) {
+    console.error("adminListWithdrawalMethodConfigs error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+};
+
+exports.adminToggleWithdrawalMethod = async (req, res) => {
+  try {
+    const cleanMethod = String(req.params.method || "").trim().toUpperCase();
+    const { isAvailable, note } = req.body || {};
+
+    if (!WITHDRAWAL_METHODS.includes(cleanMethod)) {
+      return res.status(400).json({ ok: false, message: "Invalid withdrawal method" });
+    }
+
+    const item = await WithdrawalMethodConfig.findOneAndUpdate(
+      { method: cleanMethod },
+      {
+        method: cleanMethod,
+        isAvailable: Boolean(isAvailable),
+        note: String(note || "").trim(),
+        updatedBy: req.user.userId || req.user._id || null,
+        updatedAt: new Date(),
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+      }
+    );
+
+    return res.json({
+      ok: true,
+      message: `${cleanMethod} updated successfully`,
+      item,
+    });
+  } catch (err) {
+    console.error("adminToggleWithdrawalMethod error:", err);
     return res.status(500).json({ ok: false, message: "Server error" });
   }
 };
