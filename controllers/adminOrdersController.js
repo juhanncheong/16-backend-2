@@ -526,6 +526,51 @@ async function setUserResetCount(req, res) {
   }
 }
 
+async function adminUserOrderHistory(req, res) {
+  try {
+    const { userId } = req.params;
+    const page = Math.max(1, parseInt(req.query.page || "1", 10));
+    const limit = Math.max(1, parseInt(req.query.limit || "10", 10));
+    const status = String(req.query.status || "").trim().toUpperCase();
+
+    const user = await User.findById(userId).select("_id uid phoneNumber").lean();
+    if (!user) {
+      return res.status(404).json({ ok: false, message: "User not found" });
+    }
+
+    const filter = { user: userId };
+    if (status) {
+      filter.status = status;
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [orders, total] = await Promise.all([
+      UserOrder.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      UserOrder.countDocuments(filter),
+    ]);
+
+    return res.json({
+      ok: true,
+      user,
+      orders,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    });
+  } catch (err) {
+    console.error("adminUserOrderHistory error:", err);
+    return res.status(500).json({ ok: false, message: "Server error" });
+  }
+}
+
 module.exports = {
   createPoolOrder,
   listPoolOrders,
@@ -543,4 +588,5 @@ module.exports = {
   listOrderImageMaps,
   updateOrderImageMap,
   deleteOrderImageMap,
+  adminUserOrderHistory,
 };

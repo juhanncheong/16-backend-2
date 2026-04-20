@@ -16,6 +16,7 @@ const {
   listOrderImageMaps,
   updateOrderImageMap,
   deleteOrderImageMap,
+  adminUserOrderHistory,
 } = require("../controllers/adminOrdersController");
 
 router.post("/pool/create", protect, adminOnly, createPoolOrder);
@@ -28,6 +29,7 @@ router.get("/bonus/user/:userId", protect, adminOnly, listUserBonusRules);
 router.patch("/bonus/:id/disable", protect, adminOnly, disableBonusRule);
 router.delete("/bonus/:id", protect, adminOnly, deleteBonusRule);
 router.post("/users/:userId/reset-orders", protect, adminOnly, resetUserOrders);
+router.get("/users/:userId/orders", protect, adminOnly, adminUserOrderHistory);
 router.post("/pool-image/create", protect, adminOnly, createOrderImageMap);
 router.get("/pool-image/list", protect, adminOnly, listOrderImageMaps);
 router.patch("/pool-image/:id", protect, adminOnly, updateOrderImageMap);
