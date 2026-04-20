@@ -533,12 +533,15 @@ async function adminUserOrderHistory(req, res) {
     const limit = Math.max(1, parseInt(req.query.limit || "10", 10));
     const status = String(req.query.status || "").trim().toUpperCase();
 
-    const user = await User.findById(userId).select("_id uid phoneNumber").lean();
+    const user = await User.findOne({ uid: String(userId).trim() })
+      .select("_id uid phoneNumber")
+      .lean();
+
     if (!user) {
       return res.status(404).json({ ok: false, message: "User not found" });
     }
 
-    const filter = { user: userId };
+    const filter = { user: user._id };
     if (status) {
       filter.status = status;
     }
