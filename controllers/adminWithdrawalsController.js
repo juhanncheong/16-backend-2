@@ -36,32 +36,54 @@ exports.adminListWithdrawals = async (req, res) => {
 
 exports.adminListWithdrawalMethodConfigs = async (req, res) => {
   try {
-    const methods = await Promise.all(
-      WITHDRAWAL_METHODS.map((method) =>
-        WithdrawalMethodConfig.findOneAndUpdate(
-          { method },
-          {
-            $setOnInsert: {
-              method,
-              isAvailable: true,
-              note: "",
-              updatedBy: null,
-              updatedAt: null,
-            },
-          },
-          {
-            upsert: true,
-            new: true,
-            setDefaultsOnInsert: true,
-          }
-        ).lean()
-      )
+    const existing = await WithdrawalMethodConfig.find({
+      method: { $in: WITHDRAWAL_METHODS },
+    }).lean();
+
+    const existingMap = new Map(existing.map((x) => [x.method, x]));
+
+    const missingMethods = WITHDRAWAL_METHODS.filter(
+      (method) => !existingMap.has(method)
     );
 
-    return res.json({ ok: true, methods });
+    if (missingMethods.length > 0) {
+      await WithdrawalMethodConfig.insertMany(
+        missingMethods.map((method) => ({
+          method,
+          isAvailable: true,
+          note: "",
+          updatedBy: null,
+        })),
+        { ordered: false }
+      ).catch((err) => {
+        if (err?.code !== 11000) throw err;
+      });
+    }
+
+    const methods = await WithdrawalMethodConfig.find({
+      method: { $in: WITHDRAWAL_METHODS },
+    })
+      .sort({ createdAt: 1 })
+      .lean();
+
+    const ordered = WITHDRAWAL_METHODS.map(
+      (method) =>
+        methods.find((x) => x.method === method) || {
+          method,
+          isAvailable: true,
+          note: "",
+          updatedBy: null,
+          updatedAt: null,
+        }
+    );
+
+    return res.json({ ok: true, methods: ordered });
   } catch (err) {
     console.error("adminListWithdrawalMethodConfigs error:", err);
-    return res.status(500).json({ ok: false, message: "Server error" });
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
   }
 };
 
@@ -71,24 +93,30 @@ exports.adminToggleWithdrawalMethod = async (req, res) => {
     const { isAvailable, note } = req.body || {};
 
     if (!WITHDRAWAL_METHODS.includes(cleanMethod)) {
-      return res.status(400).json({ ok: false, message: "Invalid withdrawal method" });
+      return res.status(400).json({
+        ok: false,
+        message: "Invalid withdrawal method",
+      });
     }
 
     const item = await WithdrawalMethodConfig.findOneAndUpdate(
       { method: cleanMethod },
       {
-        method: cleanMethod,
-        isAvailable: Boolean(isAvailable),
-        note: String(note || "").trim(),
-        updatedBy: req.user.userId || req.user._id || null,
-        updatedAt: new Date(),
+        $set: {
+          isAvailable: Boolean(isAvailable),
+          note: String(note || "").trim(),
+          updatedBy: req.user?.userId || req.user?._id || null,
+        },
+        $setOnInsert: {
+          method: cleanMethod,
+        },
       },
       {
         upsert: true,
         new: true,
-        setDefaultsOnInsert: true,
+        runValidators: true,
       }
-    );
+    ).lean();
 
     return res.json({
       ok: true,
@@ -97,7 +125,10 @@ exports.adminToggleWithdrawalMethod = async (req, res) => {
     });
   } catch (err) {
     console.error("adminToggleWithdrawalMethod error:", err);
-    return res.status(500).json({ ok: false, message: "Server error" });
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
   }
 };
 
