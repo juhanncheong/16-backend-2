@@ -41,6 +41,7 @@ const upload = multer({
 
 /**
  * admin: list conversations
+ * includes unreadCount for admin
  */
 router.get("/conversations", async (req, res) => {
   try {
@@ -56,6 +57,21 @@ router.get("/conversations", async (req, res) => {
           fileName: { $first: "$fileName" },
           sender: { $first: "$sender" },
           status: { $first: "$status" },
+
+          unreadCount: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$sender", "user"] },
+                    { $ne: ["$adminRead", true] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
         },
       },
       { $sort: { lastTime: -1 } },
@@ -73,6 +89,7 @@ router.get("/conversations", async (req, res) => {
       fileName: row.fileName || "",
       sender: row.sender || "",
       status: row.status || "sent",
+      unreadCount: Number(row.unreadCount || 0),
     }));
 
     res.json({ conversations });
@@ -84,10 +101,22 @@ router.get("/conversations", async (req, res) => {
 
 /**
  * get messages for a user
+ * also marks all user -> admin unread messages as read
  */
 router.get("/messages/:userId", async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
+
+    await ChatMessage.updateMany(
+      {
+        userId,
+        sender: "user",
+        adminRead: { $ne: true },
+      },
+      {
+        $set: { adminRead: true },
+      }
+    );
 
     const rows = await ChatMessage.find({ userId })
       .sort({ createdAt: 1, _id: 1 })
@@ -103,12 +132,46 @@ router.get("/messages/:userId", async (req, res) => {
       type: row.type || "text",
       imageUrl: row.imageUrl || "",
       fileName: row.fileName || "",
+      adminRead: row.adminRead === true,
     }));
 
     res.json({ messages });
   } catch (err) {
     console.error("chat messages error:", err);
     res.status(500).json({ message: "Failed to fetch messages" });
+  }
+});
+
+/**
+ * manually mark one conversation as read for admin
+ */
+router.patch("/conversations/:userId/read-admin", async (req, res) => {
+  try {
+    const userId = String(req.params.userId || "").trim();
+
+    if (!userId) {
+      return res.status(400).json({ message: "userId is required" });
+    }
+
+    const result = await ChatMessage.updateMany(
+      {
+        userId,
+        sender: "user",
+        adminRead: { $ne: true },
+      },
+      {
+        $set: { adminRead: true },
+      }
+    );
+
+    return res.json({
+      ok: true,
+      userId,
+      updatedCount: Number(result.modifiedCount || 0),
+    });
+  } catch (err) {
+    console.error("read-admin error:", err);
+    res.status(500).json({ message: "Failed to mark conversation as read" });
   }
 });
 
@@ -146,6 +209,7 @@ router.post("/upload", upload.single("image"), async (req, res) => {
       type: "image",
       imageUrl,
       fileName: req.file.originalname || "",
+      adminRead: sender === "admin",
     });
 
     return res.json({
@@ -160,6 +224,7 @@ router.post("/upload", upload.single("image"), async (req, res) => {
         type: saved.type || "image",
         imageUrl: saved.imageUrl || "",
         fileName: saved.fileName || "",
+        adminRead: saved.adminRead === true,
       },
     });
   } catch (err) {

@@ -10,6 +10,7 @@ const ChatMessageSchema = new mongoose.Schema(
     type: { type: String, enum: ["text", "image"], default: "text" },
     imageUrl: { type: String, default: "" },
     fileName: { type: String, default: "" },
+    adminRead: { type: Boolean, default: false, index: true },
   },
   { versionKey: false }
 );

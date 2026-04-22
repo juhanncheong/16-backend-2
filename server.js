@@ -30,7 +30,7 @@ async function startServer() {
   const app = express();
 
   app.set("trust proxy", true);
-  
+
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
@@ -94,7 +94,7 @@ async function startServer() {
       try {
         const msg = String(message || "").trim();
         if (!userId || !msg) return;
-    
+
         const saved = await ChatMessage.create({
           userId,
           sender: "user",
@@ -102,10 +102,11 @@ async function startServer() {
           createdAt: new Date(),
           type: "text",
           status: "sent",
+          adminRead: false,
         });
-    
+
         io.to(`user:${userId}`).emit("chat:delivered", { tempId });
-    
+
         io.to("admins").emit("chat:newMessage", {
           id: saved._id.toString(),
           userId,
@@ -114,6 +115,7 @@ async function startServer() {
           createdAt: saved.createdAt,
           type: "text",
           status: "sent",
+          adminRead: false,
         });
       } catch (err) {
         console.error("user:message error", err);
@@ -123,7 +125,7 @@ async function startServer() {
     socket.on("chat:imageSent", (msg) => {
       try {
         if (!msg || !msg.userId) return;
-    
+
         const payload = {
           id: msg.id,
           userId: msg.userId,
@@ -134,8 +136,12 @@ async function startServer() {
           type: msg.type || "image",
           imageUrl: msg.imageUrl || "",
           fileName: msg.fileName || "",
+          adminRead:
+            typeof msg.adminRead === "boolean"
+              ? msg.adminRead
+              : (msg.sender || "user") === "admin",
         };
-    
+
         io.to("admins").emit("chat:newMessage", payload);
         io.to(`user:${msg.userId}`).emit("chat:newMessage", payload);
       } catch (err) {
@@ -148,7 +154,7 @@ async function startServer() {
       try {
         const msg = String(message || "").trim();
         if (!userId || !msg) return;
-    
+
         const saved = await ChatMessage.create({
           userId,
           sender: "admin",
@@ -156,14 +162,15 @@ async function startServer() {
           createdAt: new Date(),
           type: "text",
           status: "sent",
+          adminRead: true,
         });
-    
+
         io.to("admins").emit("chat:status", {
           clientId,
           messageId: saved._id.toString(),
           status: "sent",
         });
-    
+
         io.to(`user:${userId}`).emit("chat:newMessage", {
           id: saved._id.toString(),
           userId,
@@ -172,8 +179,9 @@ async function startServer() {
           createdAt: saved.createdAt,
           status: "sent",
           type: "text",
+          adminRead: true,
         });
-    
+
         io.to("admins").emit("chat:newMessage", {
           id: saved._id.toString(),
           clientId,
@@ -183,6 +191,7 @@ async function startServer() {
           createdAt: saved.createdAt,
           status: "sent",
           type: "text",
+          adminRead: true,
         });
       } catch (err) {
         console.error("admin:message error", err);
