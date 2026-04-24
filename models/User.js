@@ -7,6 +7,7 @@ const userSchema = new mongoose.Schema(
     password: { type: String, required: true, minlength: 6 },
     uid: { type: String, unique: true, sparse: true, trim: true },
     balance: { type: Number, default: 0 },
+    creditScore: { type: Number, default: 100, min: 0, max: 100, },
     vipRank: { type: Number, enum: [1, 2, 3], default: 1 },
     ordersCompleted: { type: Number, default: 0 },
     ordersLimit: { type: Number, default: 40 },

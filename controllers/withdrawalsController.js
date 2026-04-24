@@ -250,12 +250,27 @@ exports.createWithdrawal = async (req, res) => {
 
     const user = await User.findById(userId)
       .select(
-        "+withdrawPinHash withdrawPinFailedAttempts withdrawPinLocked withdrawPinLockedAt balance ordersCompleted ordersLimit withdrawalBlocked withdrawalBlockedReason withdrawalBlockedAt"
+        "+withdrawPinHash withdrawPinFailedAttempts withdrawPinLocked withdrawPinLockedAt balance ordersCompleted ordersLimit withdrawalBlocked withdrawalBlockedReason withdrawalBlockedAt creditScore"
       )
       .session(session);
 
     if (!user) throw new Error("User not found");
 
+    const creditScore = Number(user.creditScore ?? 100);
+
+    if (creditScore < 95) {
+      await session.abortTransaction();
+      session.endSession();
+    
+      return res.status(403).json({
+        ok: false,
+        code: "INSUFFICIENT_CREDIT_SCORE",
+        message: "Insufficient credit score. Please contact customer service.",
+        creditScore,
+        requiredCreditScore: 95,
+      });
+    }
+    
     if (user.withdrawalBlocked) {
       await session.abortTransaction();
       session.endSession();

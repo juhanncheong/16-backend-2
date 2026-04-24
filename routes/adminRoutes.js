@@ -701,6 +701,57 @@ router.delete("/users/:id", protect, adminOnly, async (req, res) => {
   }
 });
 
+// ✅ Admin update user credit score
+router.patch("/users/:id/credit-score", protect, adminOnly, async (req, res) => {
+  try {
+    const score = Number(req.body.creditScore);
+
+    if (!Number.isFinite(score)) {
+      return res.status(400).json({
+        ok: false,
+        message: "creditScore must be a number",
+      });
+    }
+
+    if (score < 0 || score > 100) {
+      return res.status(400).json({
+        ok: false,
+        message: "creditScore must be between 0 and 100",
+      });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      {
+        creditScore: score,
+      },
+      {
+        new: true,
+        runValidators: true,
+      }
+    ).select("-password");
+
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        message: "User not found",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      message: "✅ Credit score updated successfully",
+      user,
+    });
+  } catch (err) {
+    console.error("admin credit-score error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
 router.patch("/users/:id/withdrawal-block", protect, adminOnly, async (req, res) => {
   try {
     const { blocked, reason } = req.body;
