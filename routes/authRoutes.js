@@ -8,6 +8,7 @@ const UserOrder = require("../models/UserOrder");
 const VipConfig = require("../models/VipConfig");
 const AdminPopup = require("../models/AdminPopup");
 const AdminPopupUserState = require("../models/AdminPopupUserState");
+const AdminNotification = require("../models/AdminNotification");
 
 const router = express.Router();
 const jwt = require("jsonwebtoken");
@@ -68,10 +69,14 @@ router.post("/signup", async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const ip =
+    const rawIp =
       req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
       req.socket?.remoteAddress ||
       req.ip;
+    
+    const ip = String(rawIp || "")
+      .replace("::ffff:", "")
+      .trim();
     
     let registeredCountry = null;
 
@@ -122,8 +127,42 @@ router.post("/signup", async (req, res) => {
       referredByCode: referrer.referralCode,
     });
 
+    // ✅ Duplicate register IP notification
+    try {
+      const normalizedIp = String(ip || "")
+        .replace("::ffff:", "")
+        .trim();
+    
+      if (
+        normalizedIp &&
+        normalizedIp !== "::1" &&
+        normalizedIp !== "127.0.0.1" &&
+        !normalizedIp.startsWith("192.168.") &&
+        !normalizedIp.startsWith("10.") &&
+        !normalizedIp.startsWith("172.")
+      ) {
+        const matchedUser = await User.findOne({
+          _id: { $ne: user._id },
+          registeredIp: normalizedIp,
+        }).lean();
+    
+        if (matchedUser) {
+          await AdminNotification.create({
+            type: "DUPLICATE_REGISTER_IP",
+            title: "Duplicate register IP detected",
+            message: `A register IP is being used by more than one user.`,
+            user: user._id,
+            relatedUser: matchedUser._id,
+            ip: normalizedIp,
+          });
+        }
+      }
+    } catch (notifyErr) {
+      console.error("Duplicate register IP notification failed:", notifyErr.message);
+    }
+
     return res.status(201).json({
-      message: "✅ Signup successful",
+      message: "Signup successful",
       user: {
         id: user._id,
         phoneNumber: user.phoneNumber,
