@@ -133,6 +133,7 @@ router.get("/messages/:userId", async (req, res) => {
       imageUrl: row.imageUrl || "",
       fileName: row.fileName || "",
       adminRead: row.adminRead === true,
+      userRead: row.userRead === true,
     }));
 
     res.json({ messages });
@@ -210,6 +211,7 @@ router.post("/upload", upload.single("image"), async (req, res) => {
       imageUrl,
       fileName: req.file.originalname || "",
       adminRead: sender === "admin",
+      userRead: sender === "admin" ? false : true,
     });
 
     return res.json({
@@ -225,6 +227,7 @@ router.post("/upload", upload.single("image"), async (req, res) => {
         imageUrl: saved.imageUrl || "",
         fileName: saved.fileName || "",
         adminRead: saved.adminRead === true,
+        userRead: saved.userRead === true,
       },
     });
   } catch (err) {

@@ -140,6 +140,12 @@ async function startServer() {
             typeof msg.adminRead === "boolean"
               ? msg.adminRead
               : (msg.sender || "user") === "admin",
+          userRead:
+            typeof msg.userRead === "boolean"
+              ? msg.userRead
+              : (msg.sender || "user") === "admin"
+              ? false
+              : true,
         };
 
         io.to("admins").emit("chat:newMessage", payload);
@@ -163,6 +169,7 @@ async function startServer() {
           type: "text",
           status: "sent",
           adminRead: true,
+          userRead: false,
         });
 
         io.to("admins").emit("chat:status", {
@@ -180,6 +187,7 @@ async function startServer() {
           status: "sent",
           type: "text",
           adminRead: true,
+          userRead: false,
         });
 
         io.to("admins").emit("chat:newMessage", {
@@ -192,9 +200,39 @@ async function startServer() {
           status: "sent",
           type: "text",
           adminRead: true,
+          userRead: false,
         });
       } catch (err) {
         console.error("admin:message error", err);
+      }
+    });
+
+    socket.on("user:readAdminMessages", async ({ userId }) => {
+      try {
+        if (!userId) return;
+    
+        const result = await ChatMessage.updateMany(
+          {
+            userId,
+            sender: "admin",
+            userRead: { $ne: true },
+          },
+          {
+            $set: {
+              userRead: true,
+              status: "read",
+            },
+          }
+        );
+    
+        if (result.modifiedCount > 0) {
+          io.to("admins").emit("chat:adminMessagesReadByUser", {
+            userId,
+            status: "read",
+          });
+        }
+      } catch (err) {
+        console.error("user:readAdminMessages error", err);
       }
     });
 
