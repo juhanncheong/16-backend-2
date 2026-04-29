@@ -11,6 +11,8 @@ const WITHDRAWAL_METHODS = [
   "USDC_ERC20",
   "USDT_TRC20",
   "BANK_FASTER_PAYMENTS",
+  "BANK_SEPA",
+  "WISE",
 ];
 
 // ✅ Admin: list withdrawals (optional filters)

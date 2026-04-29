@@ -15,6 +15,8 @@ const WITHDRAWAL_METHODS = [
   "USDC_ERC20",
   "USDT_TRC20",
   "BANK_FASTER_PAYMENTS",
+  "BANK_SEPA",
+  "WISE",
 ];
 
 const CRYPTO_METHODS = [
@@ -51,6 +53,29 @@ function isValidSortCode(sortCode) {
 
 function isValidAccountNumber(accountNumber) {
   return /^\d{6,8}$/.test(String(accountNumber || "").trim());
+}
+
+function normalizeIban(iban) {
+  return String(iban || "").replace(/\s+/g, "").trim().toUpperCase();
+}
+
+function normalizeBicSwift(bicSwift) {
+  return String(bicSwift || "").replace(/\s+/g, "").trim().toUpperCase();
+}
+
+function isValidIban(iban) {
+  const clean = normalizeIban(iban);
+  return /^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(clean);
+}
+
+function isValidBicSwift(bicSwift) {
+  const clean = normalizeBicSwift(bicSwift);
+  if (!clean) return true; // optional
+  return /^[A-Z0-9]{8}([A-Z0-9]{3})?$/.test(clean);
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
 }
 
 async function createAdminNotification({
@@ -400,6 +425,10 @@ exports.createWithdrawal = async (req, res) => {
       bankName: "",
       sortCode: "",
       accountNumber: "",
+      iban: "",
+      bicSwift: "",
+      country: "",
+      wiseEmail: "",
       referenceNote: "",
     };
 
@@ -446,17 +475,64 @@ exports.createWithdrawal = async (req, res) => {
       const sortCode = normalizeSortCode(bankDetails?.sortCode);
       const accountNumber = normalizeAccountNumber(bankDetails?.accountNumber);
       const referenceNote = String(bankDetails?.referenceNote || "").trim();
-
+    
       if (!accountName) throw new Error("Account name is required");
       if (!bankName) throw new Error("Bank name is required");
       if (!isValidSortCode(sortCode)) throw new Error("Invalid sort code");
       if (!isValidAccountNumber(accountNumber)) throw new Error("Invalid account number");
-
+    
       cleanBankDetails = {
         accountName,
         bankName,
         sortCode,
         accountNumber,
+        iban: "",
+        bicSwift: "",
+        country: "GB",
+        wiseEmail: "",
+        referenceNote,
+      };
+    } else if (selectedMethod === "BANK_SEPA") {
+      const accountName = String(bankDetails?.accountName || "").trim();
+      const bankName = String(bankDetails?.bankName || "").trim();
+      const iban = normalizeIban(bankDetails?.iban);
+      const bicSwift = normalizeBicSwift(bankDetails?.bicSwift);
+      const country = String(bankDetails?.country || "").trim().toUpperCase();
+      const referenceNote = String(bankDetails?.referenceNote || "").trim();
+    
+      if (!accountName) throw new Error("Account name is required");
+      if (!iban || !isValidIban(iban)) throw new Error("Invalid IBAN");
+      if (!isValidBicSwift(bicSwift)) throw new Error("Invalid BIC/SWIFT");
+    
+      cleanBankDetails = {
+        accountName,
+        bankName,
+        sortCode: "",
+        accountNumber: "",
+        iban,
+        bicSwift,
+        country,
+        wiseEmail: "",
+        referenceNote,
+      };
+    } else if (selectedMethod === "WISE") {
+      const accountName = String(bankDetails?.accountName || "").trim();
+      const wiseEmail = String(bankDetails?.wiseEmail || "").trim().toLowerCase();
+      const country = String(bankDetails?.country || "").trim().toUpperCase();
+      const referenceNote = String(bankDetails?.referenceNote || "").trim();
+    
+      if (!accountName) throw new Error("Account name is required");
+      if (!wiseEmail || !isValidEmail(wiseEmail)) throw new Error("Invalid Wise email");
+    
+      cleanBankDetails = {
+        accountName,
+        bankName: "Wise",
+        sortCode: "",
+        accountNumber: "",
+        iban: "",
+        bicSwift: "",
+        country,
+        wiseEmail,
         referenceNote,
       };
     }
@@ -479,7 +555,9 @@ exports.createWithdrawal = async (req, res) => {
           cryptoType: CRYPTO_METHODS.includes(selectedMethod) ? selectedMethod : null,
           address: cleanAddress,
           bankDetails:
-            selectedMethod === "BANK_FASTER_PAYMENTS" ? cleanBankDetails : undefined,
+            ["BANK_FASTER_PAYMENTS", "BANK_SEPA", "WISE"].includes(selectedMethod)
+              ? cleanBankDetails
+              : undefined,
           status: "PENDING",
           balanceBefore,
           balanceAfter: user.balance,
@@ -496,6 +574,10 @@ exports.createWithdrawal = async (req, res) => {
       address:
         selectedMethod === "BANK_FASTER_PAYMENTS"
           ? `${cleanBankDetails.bankName} ${cleanBankDetails.accountNumber}`
+          : selectedMethod === "BANK_SEPA"
+          ? `${cleanBankDetails.iban}`
+          : selectedMethod === "WISE"
+          ? `${cleanBankDetails.wiseEmail}`
           : cleanAddress,
       cryptoType: selectedMethod,
       session,

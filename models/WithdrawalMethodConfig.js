@@ -11,6 +11,8 @@ const withdrawalMethodConfigSchema = new mongoose.Schema(
         "USDC_ERC20",
         "USDT_TRC20",
         "BANK_FASTER_PAYMENTS",
+        "BANK_SEPA",
+        "WISE",
       ],
       required: true,
       unique: true,

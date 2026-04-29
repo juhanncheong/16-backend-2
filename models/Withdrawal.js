@@ -15,6 +15,8 @@ const withdrawalSchema = new mongoose.Schema(
         "USDC_ERC20",
         "USDT_TRC20",
         "BANK_FASTER_PAYMENTS",
+        "BANK_SEPA",
+        "WISE",
       ],
       required: true,
     },
@@ -28,12 +30,22 @@ const withdrawalSchema = new mongoose.Schema(
     // crypto
     address: { type: String, default: "", trim: true },
 
-    // bank transfer
     bankDetails: {
       accountName: { type: String, default: "", trim: true },
       bankName: { type: String, default: "", trim: true },
+    
+      // UK Faster Payments
       sortCode: { type: String, default: "", trim: true },
       accountNumber: { type: String, default: "", trim: true },
+    
+      // SEPA
+      iban: { type: String, default: "", trim: true },
+      bicSwift: { type: String, default: "", trim: true },
+      country: { type: String, default: "", trim: true },
+    
+      // Wise
+      wiseEmail: { type: String, default: "", trim: true },
+    
       referenceNote: { type: String, default: "", trim: true },
     },
 
