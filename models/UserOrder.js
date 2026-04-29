@@ -24,7 +24,5 @@ const userOrderSchema = new mongoose.Schema(
 );
 
 userOrderSchema.index({ user: 1, status: 1 });
-userOrderSchema.index({ user: 1, createdAt: -1 });
-userOrderSchema.index({ user: 1, status: 1, createdAt: -1 });
 
 module.exports = mongoose.model("UserOrder", userOrderSchema);

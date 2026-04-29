@@ -141,7 +141,8 @@ async function searchFlights(req, res) {
       .lean();
 
     if (existingPending) {
-      const pendingImageUrl = await resolveOrderImage(existingPending.poolOrder);
+      const pendingImageUrl =
+        existingPending.imageUrl || (await resolveOrderImage(existingPending.poolOrder));
 
       const stats = buildPendingStats(
         existingPending.price,
@@ -541,7 +542,8 @@ async function currentOrder(req, res) {
       pending.isBonus
     );
 
-    const pendingImageUrl = await resolveOrderImage(pending.poolOrder);
+    const pendingImageUrl =
+      pending.imageUrl || (await resolveOrderImage(pending.poolOrder));
 
     return res.json({
       ok: true,
