@@ -19,10 +19,12 @@ const contentRoutes = require("./routes/contentRoutes");
 const adminLuckyDrawRuleRoutes = require("./routes/adminLuckyDrawRuleRoutes");
 const userLuckyDrawRuleRoutes = require("./routes/userLuckyDrawRuleRoutes");
 const adminNotificationsRoutes = require("./routes/adminNotificationsRoutes");
+const pushRoutes = require("./routes/pushRoutes");
 
 const http = require("http");
 const { Server } = require("socket.io");
 const ChatMessage = require("./models/ChatMessage");
+const { sendPushToUser } = require("./utils/pushService");
 
 dotenv.config();
 
@@ -53,6 +55,7 @@ async function startServer() {
   app.use("/api/wallet-transactions", walletTransactionsRoutes);
   app.use("/api/signin", signinRoutes);
   app.use("/api/chat", chatRoutes);
+  app.use("/api/push", pushRoutes);
   app.use("/api", eventRoutes);
   app.use("/api", vipRoutes);
   app.use("/api", contentRoutes);
@@ -188,6 +191,15 @@ async function startServer() {
           type: "text",
           adminRead: true,
           userRead: false,
+        });
+
+        await sendPushToUser(userId, {
+          title: "Support Team",
+          body: msg.length > 80 ? msg.slice(0, 80) + "..." : msg,
+          url: "/chat.html",
+          type: "chat",
+          userId,
+          messageId: saved._id.toString(),
         });
 
         io.to("admins").emit("chat:newMessage", {
