@@ -268,6 +268,8 @@ async function searchFlights(req, res) {
     const rateToUse = isBonus ? bonusCommissionRateToUse : vip.commissionRate;
     const commission = calcCommission(selected.price, rateToUse);
 
+    const resolvedImageUrl = await resolveOrderImage(selected);
+
     const created = await UserOrder.create({
       user: userId,
       poolOrder: selected._id,
@@ -277,9 +279,9 @@ async function searchFlights(req, res) {
       price: selected.price,
       commission,
       isBonus,
+      imageUrl: resolvedImageUrl,
+      imageKey: selected.imageKey || "",
     });
-
-    const resolvedImageUrl = await resolveOrderImage(selected);
 
     const stats = buildPendingStats(
       created.price,
@@ -439,23 +441,67 @@ async function orderHistory(req, res) {
   try {
     const userId = req.user.userId;
 
-    const orders = await UserOrder.find({ user: userId })
-      .populate("poolOrder", "imageUrl imageKey")
-      .sort({ createdAt: -1 })
-      .lean();
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limitRaw = Number.parseInt(req.query.limit, 10) || 10;
+    const limit = Math.min(50, Math.max(1, limitRaw));
+    const skip = (page - 1) * limit;
 
-    const ordersWithImages = await Promise.all(
+    const status = String(req.query.status || "").trim().toUpperCase();
+
+    const query = { user: userId };
+
+    if (status && ["PENDING", "COMPLETED"].includes(status)) {
+      query.status = status;
+    }
+
+    const [orders, total] = await Promise.all([
+      UserOrder.find(query)
+        .populate("poolOrder", "imageUrl imageKey")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+
+      UserOrder.countDocuments(query),
+    ]);
+
+    const normalizedOrders = await Promise.all(
       orders.map(async (order) => {
-        const imageUrl = await resolveOrderImage(order.poolOrder);
+        let imageUrl = order.imageUrl || "";
+
+        if (!imageUrl && order.poolOrder) {
+          imageUrl = await resolveOrderImage(order.poolOrder);
+        }
 
         return {
-          ...order,
+          _id: order._id,
+          status: order.status,
+          orderNumber: order.orderNumber,
+          orderName: order.orderName,
+          price: order.price,
+          commission: order.commission,
+          isBonus: order.isBonus,
+          completedAt: order.completedAt,
+          createdAt: order.createdAt,
+          updatedAt: order.updatedAt,
           imageUrl,
+          imageKey: order.imageKey || order.poolOrder?.imageKey || "",
         };
       })
     );
 
-    return res.json({ ok: true, orders: ordersWithImages });
+    return res.json({
+      ok: true,
+      orders: normalizedOrders,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasPrev: page > 1,
+        hasNext: page * limit < total,
+      },
+    });
   } catch (err) {
     console.error("orderHistory error:", err);
     return res.status(500).json({ ok: false, message: "Server error" });

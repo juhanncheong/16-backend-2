@@ -13,12 +13,18 @@ const userOrderSchema = new mongoose.Schema(
     price: { type: Number, required: true },
     commission: { type: Number, required: true },
 
+    // snapshot image data for history
+    imageUrl: { type: String, default: "" },
+    imageKey: { type: String, default: "" },
+
     isBonus: { type: Boolean, default: false },
     completedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
 
-userOrderSchema.index({ user: 1, status: 1 }); // faster pending fetch
+userOrderSchema.index({ user: 1, status: 1 });
+userOrderSchema.index({ user: 1, createdAt: -1 });
+userOrderSchema.index({ user: 1, status: 1, createdAt: -1 });
 
 module.exports = mongoose.model("UserOrder", userOrderSchema);
