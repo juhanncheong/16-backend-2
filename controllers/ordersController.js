@@ -440,10 +440,22 @@ async function orderHistory(req, res) {
     const userId = req.user.userId;
 
     const orders = await UserOrder.find({ user: userId })
+      .populate("poolOrder", "imageUrl imageKey")
       .sort({ createdAt: -1 })
       .lean();
 
-    return res.json({ ok: true, orders });
+    const ordersWithImages = await Promise.all(
+      orders.map(async (order) => {
+        const imageUrl = await resolveOrderImage(order.poolOrder);
+
+        return {
+          ...order,
+          imageUrl,
+        };
+      })
+    );
+
+    return res.json({ ok: true, orders: ordersWithImages });
   } catch (err) {
     console.error("orderHistory error:", err);
     return res.status(500).json({ ok: false, message: "Server error" });
