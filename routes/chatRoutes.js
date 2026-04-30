@@ -6,16 +6,11 @@ const fs = require("fs");
 
 const ChatMessage = require("../models/ChatMessage");
 const AdminNote = require("../models/AdminNote");
+const User = require("../models/User");
 
-/**
- * upload folder
- */
 const uploadDir = path.join(__dirname, "../uploads/chat");
 fs.mkdirSync(uploadDir, { recursive: true });
 
-/**
- * multer config
- */
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
@@ -50,6 +45,8 @@ router.get("/conversations", async (req, res) => {
       {
         $group: {
           _id: "$userId",
+          uid: { $first: "$uid" },
+          phoneNumber: { $first: "$phoneNumber" },
           lastMessage: { $first: "$message" },
           lastTime: { $first: "$createdAt" },
           lastType: { $first: "$type" },
@@ -79,6 +76,8 @@ router.get("/conversations", async (req, res) => {
 
     const conversations = rows.map((row) => ({
       userId: row._id,
+      uid: row.uid || "",
+      phoneNumber: row.phoneNumber || "",
       lastMessage:
         row.lastType === "image"
           ? row.lastMessage || "Image"
@@ -125,6 +124,8 @@ router.get("/messages/:userId", async (req, res) => {
     const messages = rows.map((row) => ({
       id: String(row._id),
       userId: row.userId,
+      uid: row.uid || "",
+      phoneNumber: row.phoneNumber || "",
       sender: row.sender,
       message: row.message || "",
       createdAt: row.createdAt,
@@ -201,8 +202,14 @@ router.post("/upload", upload.single("image"), async (req, res) => {
     const createdAt = new Date();
     const imageUrl = `/uploads/chat/${req.file.filename}`;
 
+    const user = await User.findById(userId)
+     .select("uid phoneNumber")
+     .lean();
+
     const saved = await ChatMessage.create({
       userId,
+      uid: user?.uid || "",
+      phoneNumber: user?.phoneNumber || "",
       sender,
       message,
       createdAt,
@@ -219,6 +226,8 @@ router.post("/upload", upload.single("image"), async (req, res) => {
       messageData: {
         id: String(saved._id),
         userId: saved.userId,
+        uid: saved.uid || "",
+        phoneNumber: saved.phoneNumber || "",
         sender: saved.sender,
         message: saved.message || "",
         createdAt: saved.createdAt,

@@ -24,6 +24,7 @@ const pushRoutes = require("./routes/pushRoutes");
 const http = require("http");
 const { Server } = require("socket.io");
 const ChatMessage = require("./models/ChatMessage");
+const User = require("./models/User");
 const { sendPushToUser } = require("./utils/pushService");
 
 dotenv.config();
@@ -98,8 +99,14 @@ async function startServer() {
         const msg = String(message || "").trim();
         if (!userId || !msg) return;
 
+        const user = await User.findById(userId)
+          .select("uid phoneNumber")
+          .lean();
+        
         const saved = await ChatMessage.create({
           userId,
+          uid: user?.uid || "",
+          phoneNumber: user?.phoneNumber || "",
           sender: "user",
           message: msg,
           createdAt: new Date(),
@@ -113,6 +120,8 @@ async function startServer() {
         io.to("admins").emit("chat:newMessage", {
           id: saved._id.toString(),
           userId,
+          uid: saved.uid || "",
+          phoneNumber: saved.phoneNumber || "",
           sender: "user",
           message: msg,
           createdAt: saved.createdAt,
@@ -132,6 +141,8 @@ async function startServer() {
         const payload = {
           id: msg.id,
           userId: msg.userId,
+          uid: msg.uid || "",
+          phoneNumber: msg.phoneNumber || "",
           sender: msg.sender || "user",
           message: msg.message || "",
           createdAt: msg.createdAt,
@@ -164,8 +175,14 @@ async function startServer() {
         const msg = String(message || "").trim();
         if (!userId || !msg) return;
 
+        const user = await User.findById(userId)
+         .select("uid phoneNumber")
+         .lean();
+
         const saved = await ChatMessage.create({
           userId,
+          uid: user?.uid || "",
+          phoneNumber: user?.phoneNumber || "",
           sender: "admin",
           message: msg,
           createdAt: new Date(),
@@ -184,6 +201,8 @@ async function startServer() {
         io.to(`user:${userId}`).emit("chat:newMessage", {
           id: saved._id.toString(),
           userId,
+          uid: saved.uid || "",
+          phoneNumber: saved.phoneNumber || "",
           sender: "admin",
           message: msg,
           createdAt: saved.createdAt,
@@ -206,6 +225,8 @@ async function startServer() {
           id: saved._id.toString(),
           clientId,
           userId,
+          uid: saved.uid || "",
+          phoneNumber: saved.phoneNumber || "",
           sender: "admin",
           message: msg,
           createdAt: saved.createdAt,

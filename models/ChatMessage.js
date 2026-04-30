@@ -3,6 +3,8 @@ const mongoose = require("mongoose");
 const ChatMessageSchema = new mongoose.Schema(
   {
     userId: { type: String, required: true, index: true },
+    uid: { type: String, default: "", index: true },
+    phoneNumber: { type: String, default: "" },
     sender: { type: String, enum: ["user", "admin"], required: true },
     message: { type: String, default: "" },
     createdAt: { type: Date, default: Date.now, index: true },
