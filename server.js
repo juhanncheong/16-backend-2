@@ -277,13 +277,18 @@ async function startServer() {
   });
 
   const PORT = process.env.PORT || 8000;
-  server.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on port ${PORT}`);
-  });
 
-  connectDB()
-    .then(() => console.log("✅ MongoDB connected"))
-    .catch((err) => console.error("❌ MongoDB connection failed:", err));
+  try {
+    await connectDB();
+    console.log("✅ Database ready, starting server...");
+  
+    server.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  } catch (err) {
+    console.error("❌ MongoDB connection failed:", err);
+    process.exit(1);
+  }
 }
 
 startServer().catch((err) => console.error("❌ Server failed:", err));
