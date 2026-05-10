@@ -14,7 +14,10 @@ const VipConfig = require("../models/VipConfig");
 
 const WalletTransaction = require("../models/WalletTransaction");
 const mongoose = require("mongoose");
-const { adminListDeposits } = require("../controllers/adminDepositsController");
+const {
+  adminListDeposits,
+  adminDepositRanks,
+} = require("../controllers/adminDepositsController");
 const SigninClaim = require("../models/SigninClaim");
 const UserOrder = require("../models/UserOrder");
 const SigninRewardRule = require("../models/SigninRewardRule");
@@ -304,6 +307,7 @@ router.patch("/users/:id/balance", protect, adminOnly, async (req, res) => {
   }
 });
 
+router.get("/deposits/ranks", protect, adminOnly, adminDepositRanks);
 router.get("/deposits", protect, adminOnly, adminListDeposits);
 
 // ✅ Admin give trial bonus (virtual, non-withdrawable)

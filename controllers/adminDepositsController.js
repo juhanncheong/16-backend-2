@@ -107,3 +107,139 @@ exports.adminListDeposits = async (req, res) => {
     return res.status(500).json({ message: "Server error" });
   }
 };
+
+exports.adminDepositRanks = async (req, res) => {
+  try {
+    const sortBy = String(req.query.sortBy || "amount").trim().toLowerCase();
+    const q = String(req.query.q || "").trim();
+
+    const page = Math.max(1, parseInt(req.query.page || "1", 10));
+    const limit = Math.min(
+      100,
+      Math.max(1, parseInt(req.query.limit || "10", 10))
+    );
+    const skip = (page - 1) * limit;
+
+    const sortStage =
+      sortBy === "quantity"
+        ? { totalDeposits: -1, totalAmount: -1, lastDepositAt: -1 }
+        : { totalAmount: -1, totalDeposits: -1, lastDepositAt: -1 };
+
+    const searchMatch = q
+      ? [
+          {
+            $match: {
+              $or: [
+                { uid: { $regex: q, $options: "i" } },
+                { phoneNumber: { $regex: q, $options: "i" } },
+                { userIdText: { $regex: q, $options: "i" } },
+              ],
+            },
+          },
+        ]
+      : [];
+
+    const basePipeline = [
+      {
+        $match: {
+          type: "DEPOSIT",
+          amount: { $gt: 0 },
+        },
+      },
+      {
+        $group: {
+          _id: "$userId",
+          totalDeposits: { $sum: 1 },
+          totalAmount: { $sum: "$amount" },
+          firstDepositAt: { $min: "$createdAt" },
+          lastDepositAt: { $max: "$createdAt" },
+        },
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id",
+          foreignField: "_id",
+          as: "user",
+        },
+      },
+      {
+        $unwind: {
+          path: "$user",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          userId: "$_id",
+          userIdText: { $toString: "$_id" },
+          uid: { $ifNull: ["$user.uid", "Unknown"] },
+          phoneNumber: { $ifNull: ["$user.phoneNumber", "-"] },
+          balance: { $ifNull: ["$user.balance", 0] },
+          totalDeposits: 1,
+          totalAmount: 1,
+          firstDepositAt: 1,
+          lastDepositAt: 1,
+        },
+      },
+      ...searchMatch,
+    ];
+
+    const [rows, countResult, summaryResult] = await Promise.all([
+      WalletTransaction.aggregate([
+        ...basePipeline,
+        { $sort: sortStage },
+        { $skip: skip },
+        { $limit: limit },
+      ]),
+
+      WalletTransaction.aggregate([
+        ...basePipeline,
+        { $count: "total" },
+      ]),
+
+      WalletTransaction.aggregate([
+        ...basePipeline,
+        {
+          $group: {
+            _id: null,
+            rankedUsers: { $sum: 1 },
+            totalDeposits: { $sum: "$totalDeposits" },
+            totalAmount: { $sum: "$totalAmount" },
+          },
+        },
+      ]),
+    ]);
+
+    const total = Number(countResult[0]?.total || 0);
+
+    const ranks = rows.map((row, index) => ({
+      rank: skip + index + 1,
+      ...row,
+      totalAmount: Number(row.totalAmount || 0),
+      totalDeposits: Number(row.totalDeposits || 0),
+      balance: Number(row.balance || 0),
+    }));
+
+    return res.json({
+      ok: true,
+      sortBy: sortBy === "quantity" ? "quantity" : "amount",
+      ranks,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+      summary: {
+        rankedUsers: Number(summaryResult[0]?.rankedUsers || 0),
+        totalDeposits: Number(summaryResult[0]?.totalDeposits || 0),
+        totalAmount: Number(summaryResult[0]?.totalAmount || 0),
+      },
+    });
+  } catch (err) {
+    console.error("adminDepositRanks error:", err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
