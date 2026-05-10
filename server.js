@@ -7,6 +7,7 @@ const connectDB = require("./config/db");
 
 const adminRoutes = require("./routes/adminRoutes");
 const authRoutes = require("./routes/authRoutes");
+const agentRoutes = require("./routes/agentRoutes");
 const ordersRoutes = require("./routes/ordersRoutes");
 const adminOrdersRoutes = require("./routes/adminOrdersRoutes");
 const withdrawalsRoutes = require("./routes/withdrawalsRoutes");
@@ -50,6 +51,7 @@ async function startServer() {
   // Routes
   app.use("/api/admin", adminRoutes);
   app.use("/api/auth", authRoutes);
+  app.use("/api/agent", agentRoutes);
   app.use("/api/orders", ordersRoutes);
   app.use("/api/admin/orders", adminOrdersRoutes);
   app.use("/api/withdrawals", withdrawalsRoutes);
