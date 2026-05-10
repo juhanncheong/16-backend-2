@@ -13,6 +13,7 @@ const WITHDRAWAL_METHODS = [
   "BANK_FASTER_PAYMENTS",
   "BANK_SEPA",
   "WISE",
+  "UAEFTS",
 ];
 
 // ✅ Admin: list withdrawals (optional filters)

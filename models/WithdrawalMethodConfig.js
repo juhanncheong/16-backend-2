@@ -13,6 +13,7 @@ const withdrawalMethodConfigSchema = new mongoose.Schema(
         "BANK_FASTER_PAYMENTS",
         "BANK_SEPA",
         "WISE",
+        "UAEFTS",
       ],
       required: true,
       unique: true,

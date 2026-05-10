@@ -17,6 +17,7 @@ const WITHDRAWAL_METHODS = [
   "BANK_FASTER_PAYMENTS",
   "BANK_SEPA",
   "WISE",
+  "UAEFTS",
 ];
 
 const CRYPTO_METHODS = [
@@ -535,6 +536,36 @@ exports.createWithdrawal = async (req, res) => {
         wiseEmail,
         referenceNote,
       };
+    } else if (selectedMethod === "UAEFTS") {
+      const accountName = String(bankDetails?.accountName || "").trim();
+      const bankName = String(bankDetails?.bankName || "").trim();
+      const iban = normalizeIban(bankDetails?.iban);
+      const bicSwift = normalizeBicSwift(bankDetails?.bicSwift);
+      const referenceNote = String(bankDetails?.referenceNote || "").trim();
+    
+      if (!accountName) throw new Error("Account name is required");
+      if (!bankName) throw new Error("Bank name is required");
+    
+      // UAE IBAN = AE + 2 check digits + 3 digit bank code + 16 digit account number = 23 chars
+      if (!/^AE\d{21}$/.test(iban)) {
+        throw new Error("Invalid UAE IBAN");
+      }
+    
+      if (!isValidBicSwift(bicSwift)) {
+        throw new Error("Invalid BIC/SWIFT");
+      }
+    
+      cleanBankDetails = {
+        accountName,
+        bankName,
+        sortCode: "",
+        accountNumber: "",
+        iban,
+        bicSwift,
+        country: "AE",
+        wiseEmail: "",
+        referenceNote,
+      };
     }
 
     const balanceBefore = Number(user.balance || 0);
@@ -555,9 +586,9 @@ exports.createWithdrawal = async (req, res) => {
           cryptoType: CRYPTO_METHODS.includes(selectedMethod) ? selectedMethod : null,
           address: cleanAddress,
           bankDetails:
-            ["BANK_FASTER_PAYMENTS", "BANK_SEPA", "WISE"].includes(selectedMethod)
-              ? cleanBankDetails
-              : undefined,
+           ["BANK_FASTER_PAYMENTS", "BANK_SEPA", "WISE", "UAEFTS"].includes(selectedMethod)
+             ? cleanBankDetails
+             : undefined,
           status: "PENDING",
           balanceBefore,
           balanceAfter: user.balance,
@@ -578,6 +609,8 @@ exports.createWithdrawal = async (req, res) => {
           ? `${cleanBankDetails.iban}`
           : selectedMethod === "WISE"
           ? `${cleanBankDetails.wiseEmail}`
+          : selectedMethod === "UAEFTS"
+          ? `${cleanBankDetails.bankName} ${cleanBankDetails.iban}`
           : cleanAddress,
       cryptoType: selectedMethod,
       session,
@@ -677,6 +710,46 @@ exports.getRecentWithdrawalAddresses = async (req, res) => {
     return res.status(500).json({
       ok: false,
       message: "Failed to fetch recent withdrawal addresses",
+    });
+  }
+};
+
+exports.getLastWithdrawalDetails = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const paymentMethod = normalizeMethod(req.query.paymentMethod);
+
+    if (!paymentMethod) {
+      return res.status(400).json({
+        ok: false,
+        message: "paymentMethod is required",
+      });
+    }
+
+    if (!WITHDRAWAL_METHODS.includes(paymentMethod)) {
+      return res.status(400).json({
+        ok: false,
+        message: "Invalid withdrawal method",
+      });
+    }
+
+    const last = await Withdrawal.findOne({
+      user: userId,
+      paymentMethod,
+    })
+      .sort({ createdAt: -1 })
+      .select("paymentMethod address bankDetails createdAt")
+      .lean();
+
+    return res.json({
+      ok: true,
+      item: last || null,
+    });
+  } catch (err) {
+    console.error("getLastWithdrawalDetails error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to fetch last withdrawal details",
     });
   }
 };
