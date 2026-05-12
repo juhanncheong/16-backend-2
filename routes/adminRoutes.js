@@ -877,37 +877,6 @@ router.patch("/users/:id/reset-phone", protect, adminOnly, async (req, res) => {
   }
 });
 
-router.patch("/users/:id/signin-reward", protect, adminOnly, async (req, res) => {
-  try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ ok: false, message: "Admin only" });
-    }
-
-    const { enabled } = req.body;
-
-    const user = await User.findById(req.params.id);
-    if (!user) {
-      return res.status(404).json({ ok: false, message: "User not found" });
-    }
-
-    user.signinRewardEnabled = Boolean(enabled);
-    user.signinRewardEnabledAt = enabled ? new Date() : null;
-    user.signinRewardEnabledBy = enabled ? req.user.userId : null;
-
-    await user.save();
-
-    return res.json({
-      ok: true,
-      message: `Sign-in reward ${enabled ? "enabled" : "disabled"} successfully`,
-      userId: user._id,
-      signinRewardEnabled: user.signinRewardEnabled,
-    });
-  } catch (err) {
-    console.error("toggle signin reward error:", err);
-    return res.status(500).json({ ok: false, message: "Server error" });
-  }
-});
-
 /**
  * ============================
  * ✅ ADMIN ORDER COUNT CONTROL

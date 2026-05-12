@@ -5,6 +5,9 @@ const User = require("../models/User");
 const SigninClaim = require("../models/SigninClaim");
 const SigninRewardRule = require("../models/SigninRewardRule");
 
+const FIRST_CLAIM_ROUND = 3;
+const REPEAT_CLAIM_EVERY_ROUNDS = 2;
+
 async function getRewardForDay(streakDay) {
   // streakDay = 1..6
   const rule = await SigninRewardRule.findOne({ isActive: true }).lean();
@@ -19,29 +22,26 @@ function calcNextStreakDay({ totalResetCount, lastClaimedResetCount, signinStrea
   const lastRound = Number(lastClaimedResetCount || 0);
   const currentRound = Number(totalResetCount || 1);
 
-  // first ever claim
+  const roundsSinceLastClaim = currentRound - lastRound;
+
+  // first time claim
   if (lastRound === 0) {
     return 1;
   }
 
-  // already claimed this round => show current streak
-  if (lastRound >= currentRound) {
-    return streakNow > 0 ? Math.min(6, streakNow) : 1;
+  // not enough rounds yet, streak doesn't move
+  if (roundsSinceLastClaim < REPEAT_CLAIM_EVERY_ROUNDS) {
+    return streakNow > 0 ? streakNow : 1;
   }
 
-  // any later round claim => continue streak
-  // no reset for skipped rounds
-  // after day 6 => back to day 1
+  // enough rounds passed -> move to next day
+  // after day 6, go back to day 1
   const currentDay = streakNow > 0 ? streakNow : 1;
   return currentDay >= 6 ? 1 : currentDay + 1;
 }
 
 /**
- * STATUS (Round-based, 1 claim per round)
- * Rule:
- * - user can claim if ordersCompleted >= ordersLimit
- * - AND sign-in reward is enabled
- * - AND user has NOT claimed in current reset round
+ * STATUS
  */
 router.get("/status", protect, async (req, res) => {
   try {
@@ -52,7 +52,6 @@ router.get("/status", protect, async (req, res) => {
       return res.status(404).json({ ok: false, message: "User not found" });
     }
 
-    const signinRewardEnabled = Boolean(user.signinRewardEnabled);
     const ordersCompleted = Number(user.ordersCompleted || 0);
     const ordersLimit = Number(user.ordersLimit || 40);
 
@@ -60,7 +59,8 @@ router.get("/status", protect, async (req, res) => {
     const lastClaimedResetCount = Number(user.lastClaimedResetCount || 0);
 
     const unlocked = ordersCompleted >= ordersLimit;
-    const claimedThisRound = lastClaimedResetCount >= totalResetCount;
+    const roundsSinceLastClaim = totalResetCount - lastClaimedResetCount;
+    const isFirstClaim = lastClaimedResetCount === 0;
 
     const signinStreak = Number(user.signinStreak || 0);
 
@@ -70,10 +70,16 @@ router.get("/status", protect, async (req, res) => {
       signinStreak,
     });
 
-    // reward should match what user would claim next
     const rewardAmount = await getRewardForDay(nextStreakDay);
 
-    const canClaim = signinRewardEnabled && unlocked && !claimedThisRound;
+    const firstClaimUnlocked = totalResetCount >= FIRST_CLAIM_ROUND;
+
+    const canClaim =
+      unlocked &&
+      (
+        (isFirstClaim && firstClaimUnlocked) ||
+        (!isFirstClaim && roundsSinceLastClaim >= REPEAT_CLAIM_EVERY_ROUNDS)
+      );
 
     const rule = await SigninRewardRule.findOne({ isActive: true }).lean();
     const dayRewards = rule?.dayRewards || [10, 10, 10, 10, 10, 10];
@@ -84,12 +90,13 @@ router.get("/status", protect, async (req, res) => {
       ordersLimit,
       totalResetCount,
       lastClaimedResetCount,
+      roundsSinceLastClaim,
+      requiredRounds: isFirstClaim ? FIRST_CLAIM_ROUND : REPEAT_CLAIM_EVERY_ROUNDS,
 
       nextStreakDay,
       signinStreak,
 
       unlocked,
-      claimedThisRound,
       canClaim,
 
       rewardAmount,
@@ -97,11 +104,11 @@ router.get("/status", protect, async (req, res) => {
 
       message: canClaim
         ? "You can claim your sign-in reward now."
-        : !signinRewardEnabled
-        ? "Sign-in reward is not enabled yet. Please wait for admin approval."
         : !unlocked
-        ? `Complete ${ordersLimit} orders to unlock sign-in reward.`
-        : "Already claimed this round. Wait for admin reset.",
+        ? `Complete ${ordersLimit} orders to finish this round.`
+        : isFirstClaim && totalResetCount < FIRST_CLAIM_ROUND
+        ? `Sign-in reward will unlock on round ${FIRST_CLAIM_ROUND}. Current round: ${totalResetCount}.`
+        : `You must complete ${REPEAT_CLAIM_EVERY_ROUNDS} rounds before claiming again. Current progress: ${Math.max(0, roundsSinceLastClaim)}/${REPEAT_CLAIM_EVERY_ROUNDS} rounds.`,
     });
   } catch (err) {
     console.error("signin status error:", err);
@@ -110,12 +117,7 @@ router.get("/status", protect, async (req, res) => {
 });
 
 /**
- * CLAIM (Round-based, 1 claim per round)
- * Rule:
- * - user must have ordersCompleted >= ordersLimit
- * - user must have sign-in reward enabled
- * - user must NOT have claimed in current totalResetCount round
- * - after claim => set lastClaimedResetCount = totalResetCount
+ * CLAIM
  */
 router.post("/claim", protect, async (req, res) => {
   try {
@@ -133,36 +135,44 @@ router.post("/claim", protect, async (req, res) => {
     const lastClaimedResetCount = Number(user.lastClaimedResetCount || 0);
 
     const unlocked = ordersCompleted >= ordersLimit;
-    const claimedThisRound = lastClaimedResetCount >= totalResetCount;
-
-    if (!user.signinRewardEnabled) {
-      return res.status(403).json({
-        ok: false,
-        message: "Sign-in reward is not enabled yet. Please wait for admin approval.",
-      });
-    }
+    const roundsSinceLastClaim = totalResetCount - lastClaimedResetCount;
+    const isFirstClaim = lastClaimedResetCount === 0;
 
     if (!unlocked) {
       return res.status(400).json({
         ok: false,
-        message: `Complete ${ordersLimit} orders to unlock sign-in reward.`,
+        message: `Complete ${ordersLimit} orders to finish this round.`,
         ordersCompleted,
         ordersLimit,
         totalResetCount,
         lastClaimedResetCount,
+        roundsSinceLastClaim,
+        requiredRounds: isFirstClaim ? FIRST_CLAIM_ROUND : REPEAT_CLAIM_EVERY_ROUNDS,
       });
     }
 
-    if (claimedThisRound) {
+    if (isFirstClaim && totalResetCount < FIRST_CLAIM_ROUND) {
       return res.status(400).json({
         ok: false,
-        message: "Already claimed this round. Wait for admin reset.",
+        message: `Sign-in reward will unlock on round ${FIRST_CLAIM_ROUND}. Current round: ${totalResetCount}.`,
         totalResetCount,
         lastClaimedResetCount,
+        roundsSinceLastClaim,
+        requiredRounds: FIRST_CLAIM_ROUND,
       });
     }
 
-    // Give reward
+    if (!isFirstClaim && roundsSinceLastClaim < REPEAT_CLAIM_EVERY_ROUNDS) {
+      return res.status(400).json({
+        ok: false,
+        message: `You must complete ${REPEAT_CLAIM_EVERY_ROUNDS} rounds before claiming again. Current progress: ${Math.max(0, roundsSinceLastClaim)}/${REPEAT_CLAIM_EVERY_ROUNDS} rounds.`,
+        totalResetCount,
+        lastClaimedResetCount,
+        roundsSinceLastClaim,
+        requiredRounds: REPEAT_CLAIM_EVERY_ROUNDS,
+      });
+    }
+
     const streakDay = calcNextStreakDay({
       totalResetCount,
       lastClaimedResetCount,
@@ -178,7 +188,6 @@ router.post("/claim", protect, async (req, res) => {
 
     await user.save();
 
-    // Save claim history (one record per round)
     try {
       await SigninClaim.create({
         userId,
@@ -188,7 +197,7 @@ router.post("/claim", protect, async (req, res) => {
         rewardAmount,
       });
     } catch (e) {
-      // If duplicate key happens, ignore it
+      // duplicate record, ignore
     }
 
     return res.json({
