@@ -135,12 +135,130 @@ router.get("/messages/:userId", async (req, res) => {
       fileName: row.fileName || "",
       adminRead: row.adminRead === true,
       userRead: row.userRead === true,
+    
+      // admin-side edit info
+      edited: row.edited === true,
+      editedAt: row.editedAt || null,
+      editedBy: row.editedBy || "",
+      editHistory: Array.isArray(row.editHistory) ? row.editHistory : [],
     }));
 
     res.json({ messages });
   } catch (err) {
     console.error("chat messages error:", err);
     res.status(500).json({ message: "Failed to fetch messages" });
+  }
+});
+
+/**
+ * admin: edit an admin-sent text message
+ * keeps previous versions in editHistory
+ */
+router.patch("/messages/:messageId/edit", async (req, res) => {
+  try {
+    const messageId = String(req.params.messageId || "").trim();
+    const newMessage = String(req.body?.message || "").trim();
+
+    if (!messageId) {
+      return res.status(400).json({ message: "messageId is required" });
+    }
+
+    if (!newMessage) {
+      return res.status(400).json({ message: "Message cannot be empty" });
+    }
+
+    if (newMessage.length > 2000) {
+      return res.status(400).json({ message: "Message is too long" });
+    }
+
+    const row = await ChatMessage.findById(messageId);
+
+    if (!row) {
+      return res.status(404).json({ message: "Message not found" });
+    }
+
+    if (row.sender !== "admin") {
+      return res.status(403).json({
+        message: "Only admin-sent messages can be edited",
+      });
+    }
+
+    if (row.type !== "text") {
+      return res.status(400).json({
+        message: "Only text messages can be edited",
+      });
+    }
+
+    const oldMessage = String(row.message || "");
+
+    if (oldMessage === newMessage) {
+      return res.json({
+        ok: true,
+        message: "No changes made",
+        messageData: {
+          id: String(row._id),
+          userId: row.userId,
+          uid: row.uid || "",
+          phoneNumber: row.phoneNumber || "",
+          sender: row.sender,
+          message: row.message || "",
+          createdAt: row.createdAt,
+          status: row.status || "sent",
+          type: row.type || "text",
+          imageUrl: row.imageUrl || "",
+          fileName: row.fileName || "",
+          adminRead: row.adminRead === true,
+          userRead: row.userRead === true,
+          edited: row.edited === true,
+          editedAt: row.editedAt || null,
+          editedBy: row.editedBy || "",
+          editHistory: Array.isArray(row.editHistory) ? row.editHistory : [],
+        },
+      });
+    }
+
+    const editedAt = new Date();
+
+    row.editHistory.push({
+      oldMessage,
+      newMessage,
+      editedAt,
+      editedBy: String(req.user?.userId || req.user?._id || "admin"),
+    });
+
+    row.message = newMessage;
+    row.edited = true;
+    row.editedAt = editedAt;
+    row.editedBy = String(req.user?.userId || req.user?._id || "admin");
+
+    await row.save();
+
+    return res.json({
+      ok: true,
+      message: "Message edited successfully",
+      messageData: {
+        id: String(row._id),
+        userId: row.userId,
+        uid: row.uid || "",
+        phoneNumber: row.phoneNumber || "",
+        sender: row.sender,
+        message: row.message || "",
+        createdAt: row.createdAt,
+        status: row.status || "sent",
+        type: row.type || "text",
+        imageUrl: row.imageUrl || "",
+        fileName: row.fileName || "",
+        adminRead: row.adminRead === true,
+        userRead: row.userRead === true,
+        edited: row.edited === true,
+        editedAt: row.editedAt || null,
+        editedBy: row.editedBy || "",
+        editHistory: Array.isArray(row.editHistory) ? row.editHistory : [],
+      },
+    });
+  } catch (err) {
+    console.error("chat message edit error:", err);
+    res.status(500).json({ message: "Failed to edit message" });
   }
 });
 

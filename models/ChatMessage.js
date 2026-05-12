@@ -14,6 +14,17 @@ const ChatMessageSchema = new mongoose.Schema(
     fileName: { type: String, default: "" },
     adminRead: { type: Boolean, default: false, index: true },
     userRead: { type: Boolean, default: false, index: true },
+    edited: { type: Boolean, default: false },
+    editedAt: { type: Date, default: null },
+    editedBy: { type: String, default: "" },
+    editHistory: [
+      {
+        oldMessage: { type: String, default: "" },
+        newMessage: { type: String, default: "" },
+        editedAt: { type: Date, default: Date.now },
+        editedBy: { type: String, default: "" },
+      },
+    ],
   },
   { versionKey: false }
 );
