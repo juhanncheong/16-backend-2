@@ -901,6 +901,13 @@ router.get("/withdrawals", protect, adminOnly, adminWithdrawalsController.adminL
 router.put("/withdrawals/:id/approve", protect, adminOnly, adminWithdrawalsController.adminApproveWithdrawal);
 router.put("/withdrawals/:id/reject", protect, adminOnly, adminWithdrawalsController.adminRejectWithdrawal);
 
+router.patch(
+  "/withdrawals/:id/progress",
+  protect,
+  adminOnly,
+  adminWithdrawalsController.adminUpdateWithdrawalProgress
+);
+
 router.get(
   "/withdrawal-methods",
   protect,

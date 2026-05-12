@@ -590,6 +590,7 @@ exports.createWithdrawal = async (req, res) => {
              ? cleanBankDetails
              : undefined,
           status: "PENDING",
+          progressPercent: 0,
           balanceBefore,
           balanceAfter: user.balance,
         },

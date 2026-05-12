@@ -56,6 +56,24 @@ const withdrawalSchema = new mongoose.Schema(
       default: "PENDING",
     },
 
+    progressPercent: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+
+    progressUpdatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
+    progressUpdatedAt: {
+      type: Date,
+      default: null,
+    },
+
     balanceBefore: { type: Number, default: null },
     balanceAfter: { type: Number, default: null },
 

@@ -149,6 +149,9 @@ exports.adminApproveWithdrawal = async (req, res) => {
     }
 
     wd.status = "APPROVED";
+    wd.progressPercent = 100;
+    wd.progressUpdatedBy = req.user.userId || req.user._id;
+    wd.progressUpdatedAt = new Date();
     wd.adminActionBy = req.user._id;
     wd.actionAt = new Date();
 
@@ -197,6 +200,9 @@ exports.adminRejectWithdrawal = async (req, res) => {
 
     // ✅ update withdrawal
     wd.status = "REJECTED";
+    wd.progressPercent = 0;
+    wd.progressUpdatedBy = req.user.userId || req.user._id;
+    wd.progressUpdatedAt = new Date();
     wd.adminActionBy = req.user._id;
     wd.adminNote = String(adminNote || "");
     wd.actionAt = new Date();
@@ -355,5 +361,53 @@ exports.adminDeleteRecentWithdrawalAddress = async (req, res) => {
   } catch (err) {
     console.error("adminDeleteRecentWithdrawalAddress error:", err);
     return res.status(500).json({ ok: false, message: "Server error" });
+  }
+};
+
+// ✅ Admin: update withdrawal progress percentage
+exports.adminUpdateWithdrawalProgress = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const progressPercent = Number(req.body.progressPercent);
+
+    if (!Number.isFinite(progressPercent)) {
+      return res.status(400).json({
+        ok: false,
+        message: "progressPercent must be a number",
+      });
+    }
+
+    if (progressPercent < 0 || progressPercent > 100) {
+      return res.status(400).json({
+        ok: false,
+        message: "progressPercent must be between 0 and 100",
+      });
+    }
+
+    const wd = await Withdrawal.findById(id);
+    if (!wd) {
+      return res.status(404).json({
+        ok: false,
+        message: "Withdrawal not found",
+      });
+    }
+
+    wd.progressPercent = Math.round(progressPercent * 100) / 100;
+    wd.progressUpdatedBy = req.user.userId || req.user._id;
+    wd.progressUpdatedAt = new Date();
+
+    await wd.save();
+
+    return res.json({
+      ok: true,
+      message: "✅ Withdrawal progress updated",
+      withdrawal: wd,
+    });
+  } catch (err) {
+    console.error("adminUpdateWithdrawalProgress error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
   }
 };
