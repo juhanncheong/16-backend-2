@@ -1584,6 +1584,205 @@ router.get("/bonus-history", protect, adminOnly, async (req, res) => {
   }
 });
 
+router.post("/users/:id/borrow", protect, adminOnly, async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const amount = Number(req.body.amount);
+    const note = String(req.body.note || "Admin borrow credit").trim();
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({
+        ok: false,
+        message: "amount must be a positive number",
+      });
+    }
+
+    const user = await User.findById(req.params.id).session(session);
+    if (!user) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({
+        ok: false,
+        message: "User not found",
+      });
+    }
+
+    const before = Number(user.balance || 0);
+    const after = before + amount;
+
+    user.balance = after;
+    await user.save({ session });
+
+    await WalletTransaction.create(
+      [
+        {
+          userId: user._id,
+          type: "BORROW",
+          amount,
+          balanceBefore: before,
+          balanceAfter: after,
+          note,
+          relatedOrderId: null,
+        },
+      ],
+      { session }
+    );
+
+    await session.commitTransaction();
+    session.endSession();
+
+    return res.json({
+      ok: true,
+      message: "✅ Borrow credit added successfully",
+      transactionType: "BORROW",
+      user: {
+        _id: user._id,
+        uid: user.uid,
+        phoneNumber: user.phoneNumber,
+        balance: user.balance,
+      },
+    });
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+    console.error("admin borrow error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
+router.get("/users/:id/borrow-history", protect, adminOnly, async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const page = Math.max(1, parseInt(req.query.page || "1", 10));
+    const limit = Math.max(1, parseInt(req.query.limit || "10", 10));
+    const q = String(req.query.q || "").trim();
+
+    const filter = {
+      userId,
+      type: "BORROW",
+    };
+
+    if (q) {
+      filter.note = { $regex: q, $options: "i" };
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [rows, total] = await Promise.all([
+      WalletTransaction.find(filter)
+        .sort({ createdAt: -1 })
+        .populate("userId", "uid phoneNumber")
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      WalletTransaction.countDocuments(filter),
+    ]);
+
+    return res.json({
+      ok: true,
+      rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    });
+  } catch (err) {
+    console.error("borrow-history error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
+router.get("/borrow-history", protect, adminOnly, async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page || "1", 10));
+    const limit = Math.max(1, parseInt(req.query.limit || "10", 10));
+    const q = String(req.query.q || "").trim();
+    const uid = String(req.query.uid || "").trim();
+
+    const skip = (page - 1) * limit;
+
+    let userFilterId = null;
+
+    if (uid) {
+      const user = await User.findOne({ uid }).select("_id uid phoneNumber").lean();
+      if (!user) {
+        return res.json({
+          ok: true,
+          rows: [],
+          user: null,
+          pagination: {
+            page,
+            limit,
+            total: 0,
+            totalPages: 1,
+          },
+        });
+      }
+
+      userFilterId = user._id;
+    }
+
+    const filter = {
+      type: "BORROW",
+    };
+
+    if (userFilterId) {
+      filter.userId = userFilterId;
+    }
+
+    if (q) {
+      filter.note = { $regex: q, $options: "i" };
+    }
+
+    const [rows, total] = await Promise.all([
+      WalletTransaction.find(filter)
+        .sort({ createdAt: -1 })
+        .populate("userId", "uid phoneNumber")
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      WalletTransaction.countDocuments(filter),
+    ]);
+
+    let pickedUser = null;
+    if (userFilterId) {
+      pickedUser = await User.findById(userFilterId)
+        .select("_id uid phoneNumber balance")
+        .lean();
+    }
+
+    return res.json({
+      ok: true,
+      user: pickedUser,
+      rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    });
+  } catch (err) {
+    console.error("borrow-history error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
 router.post("/popups", protect, adminOnly, async (req, res) => {
   try {
     const { title, message, targetType, targetUsers, isActive } = req.body || {};
