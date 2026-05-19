@@ -403,4 +403,77 @@ router.patch("/admin-nickname/:userId", async (req, res) => {
   }
 });
 
+/**
+ * admin: delete admin-sent image only
+ * This will NOT delete text messages.
+ */
+router.delete("/messages/:messageId/image", async (req, res) => {
+  try {
+    const messageId = String(req.params.messageId || "").trim();
+
+    if (!messageId) {
+      return res.status(400).json({ message: "messageId is required" });
+    }
+
+    const row = await ChatMessage.findById(messageId);
+
+    if (!row) {
+      return res.status(404).json({ message: "Image message not found" });
+    }
+
+    // only images can be deleted
+    if (row.type !== "image") {
+      return res.status(400).json({
+        message: "Only image messages can be deleted",
+      });
+    }
+
+    // only admin-sent images can be deleted
+    if (row.sender !== "admin") {
+      return res.status(403).json({
+        message: "Only admin-sent images can be deleted",
+      });
+    }
+
+    const userId = String(row.userId || "");
+    const imageUrl = String(row.imageUrl || "");
+
+    // delete physical image file from uploads/chat
+    if (imageUrl.startsWith("/uploads/chat/")) {
+      const filename = path.basename(imageUrl);
+      const filePath = path.join(uploadDir, filename);
+
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    }
+
+    await ChatMessage.deleteOne({ _id: row._id });
+
+    const io = req.app.get("io");
+
+    if (io) {
+      io.to("admins").emit("chat:imageDeleted", {
+        messageId,
+        userId,
+      });
+
+      io.to(`user:${userId}`).emit("chat:imageDeleted", {
+        messageId,
+        userId,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      message: "Image deleted successfully",
+      messageId,
+      userId,
+    });
+  } catch (err) {
+    console.error("delete image error:", err);
+    res.status(500).json({ message: "Failed to delete image" });
+  }
+});
+
 module.exports = router;
