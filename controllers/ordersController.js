@@ -8,45 +8,36 @@ const WalletTransaction = require("../models/WalletTransaction");
 const LuckyDrawRule = require("../models/LuckyDrawRule");
 const OrderImageMap = require("../models/OrderImageMap");
 
-let ACTIVE_POOL_CACHE = [];
-let LAST_POOL_REFRESH = 0;
-
 async function getTrialBonusRemaining(userId) {
-  const creditRows = await WalletTransaction.aggregate([
+  const rows = await WalletTransaction.aggregate([
     {
       $match: {
         userId: new mongoose.Types.ObjectId(userId),
-        type: "TRIAL_CREDIT",
+        type: { $in: ["TRIAL_CREDIT", "TRIAL_REVERSAL"] },
       },
     },
-    { $group: { _id: null, total: { $sum: "$amount" } } },
-  ]);
-
-  const reversalRows = await WalletTransaction.aggregate([
     {
-      $match: {
-        userId: new mongoose.Types.ObjectId(userId),
-        type: "TRIAL_REVERSAL",
+      $group: {
+        _id: "$type",
+        total: { $sum: "$amount" },
       },
     },
-    { $group: { _id: null, total: { $sum: "$amount" } } },
   ]);
 
-  const credited = Number(creditRows[0]?.total || 0);
-  const reversed = Math.abs(Number(reversalRows[0]?.total || 0));
+  let credited = 0;
+  let reversed = 0;
+
+  for (const row of rows) {
+    if (row._id === "TRIAL_CREDIT") {
+      credited = Number(row.total || 0);
+    }
+
+    if (row._id === "TRIAL_REVERSAL") {
+      reversed = Math.abs(Number(row.total || 0));
+    }
+  }
 
   return Math.max(0, credited - reversed);
-}
-
-async function refreshOrderPoolCache(force = false) {
-  const now = Date.now();
-  if (!force && now - LAST_POOL_REFRESH < 5000) return; // refresh max once per 5s
-
-  ACTIVE_POOL_CACHE = await OrderPool.find({ isActive: true })
-    .select("_id orderNumber orderName price imageUrl imageKey isActive")
-    .lean();
-
-  LAST_POOL_REFRESH = now;
 }
 
 function calcCommission(price, rate) {
@@ -78,32 +69,64 @@ async function pickRandomOrderFast(min, max) {
 
   return OrderPool.findOne(query)
     .skip(skip)
-    .select("_id orderNumber orderName price imageUrl")
+    .select("_id orderNumber orderName price imageUrl imageKey isActive")
     .lean();
 }
 
-async function getVipSettings(user) {
-  let config = await VipConfig.findOne().lean();
+let VIP_CONFIG_CACHE = null;
+let VIP_CONFIG_CACHE_AT = 0;
 
-  // auto create default config if missing
-  if (!config) {
-    config = await VipConfig.create({
-      bonusCommissionRate: 0.1,
-      ranks: [
-        { rank: 1, ordersLimit: 40, commissionRate: 0.01 },
-        { rank: 2, ordersLimit: 60, commissionRate: 0.015 },
-        { rank: 3, ordersLimit: 80, commissionRate: 0.02 },
-      ],
-    });
+async function getVipSettings(user) {
+  const now = Date.now();
+
+  if (!VIP_CONFIG_CACHE || now - VIP_CONFIG_CACHE_AT > 60000) {
+    let config = await VipConfig.findOne().lean();
+
+    if (!config) {
+      config = await VipConfig.create({
+        bonusCommissionRate: 0.1,
+        ranks: [
+          { rank: 1, ordersLimit: 40, commissionRate: 0.01 },
+          { rank: 2, ordersLimit: 60, commissionRate: 0.015 },
+          { rank: 3, ordersLimit: 80, commissionRate: 0.02 },
+        ],
+      });
+
+      config = config.toObject ? config.toObject() : config;
+    }
+
+    VIP_CONFIG_CACHE = config;
+    VIP_CONFIG_CACHE_AT = now;
   }
 
   const rank = Number(user.vipRank || 1);
-  const vip = config.ranks.find((r) => r.rank === rank) || config.ranks[0];
+  const vip =
+    VIP_CONFIG_CACHE.ranks.find((r) => Number(r.rank) === rank) ||
+    VIP_CONFIG_CACHE.ranks[0];
 
   return {
     ...vip,
-    bonusCommissionRate: Number(config.bonusCommissionRate ?? 0.1),
+    bonusCommissionRate: Number(VIP_CONFIG_CACHE.bonusCommissionRate ?? 0.1),
   };
+}
+
+let IMAGE_MAP_CACHE = new Map();
+let IMAGE_MAP_CACHE_AT = 0;
+
+async function refreshImageMapCache(force = false) {
+  const now = Date.now();
+
+  if (!force && now - IMAGE_MAP_CACHE_AT < 60000) return;
+
+  const maps = await OrderImageMap.find({ isActive: true })
+    .select("key imageUrl")
+    .lean();
+
+  IMAGE_MAP_CACHE = new Map(
+    maps.map((m) => [String(m.key || "").trim().toLowerCase(), m.imageUrl])
+  );
+
+  IMAGE_MAP_CACHE_AT = now;
 }
 
 async function resolveOrderImage(order) {
@@ -112,8 +135,9 @@ async function resolveOrderImage(order) {
   const key = String(order.imageKey || "").trim().toLowerCase();
   if (!key) return order.imageUrl || "";
 
-  const map = await OrderImageMap.findOne({ key, isActive: true }).lean();
-  return map?.imageUrl || order.imageUrl || "";
+  await refreshImageMapCache();
+
+  return IMAGE_MAP_CACHE.get(key) || order.imageUrl || "";
 }
 
 async function searchFlights(req, res) {
@@ -236,27 +260,10 @@ async function searchFlights(req, res) {
       const min3 = Math.floor(balance * 0.1);
       const max3 = Math.floor(balance * 1.0);
 
-      await refreshOrderPoolCache();
-
-      const candidates1 = ACTIVE_POOL_CACHE.filter(
-        (o) => o.price >= min1 && o.price <= max1
-      );
-
-      const candidates2 = ACTIVE_POOL_CACHE.filter(
-        (o) => o.price >= min2 && o.price <= max2
-      );
-
-      const candidates3 = ACTIVE_POOL_CACHE.filter(
-        (o) => o.price >= min3 && o.price <= max3
-      );
-
-      const candidates = candidates1.length
-        ? candidates1
-        : candidates2.length
-        ? candidates2
-        : candidates3;
-
-      selected = candidates[Math.floor(Math.random() * candidates.length)] || null;
+      selected =
+        (await pickRandomOrderFast(min1, max1)) ||
+        (await pickRandomOrderFast(min2, max2)) ||
+        (await pickRandomOrderFast(min3, max3));
 
       if (!selected) {
         return res.status(404).json({
@@ -314,38 +321,46 @@ async function submitOrder(req, res) {
   try {
     const userId = req.user.userId;
 
-const user = await User.findById(userId);
-if (!user) return res.status(404).json({ ok: false, message: "User not found" });
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ ok: false, message: "User not found" });
+    }
 
-const vip = await getVipSettings(user);
-
+    const vip = await getVipSettings(user);
 
     if (user.isBanned) {
       return res.status(403).json({ ok: false, message: "User is banned" });
     }
 
     if (user.ordersCompleted >= vip.ordersLimit) {
-     return res.status(403).json({
-       ok: false,
-       message: "Order limit reached. Upgrade VIP or contact admin.",
-       completedOrders: user.ordersCompleted,
-       limit: vip.ordersLimit,
-       vipRank: vip.rank,
-     });
-   }
-
-    const pending = await UserOrder.findOne({ user: userId, status: "PENDING" });
-    if (!pending) {
-      return res.status(400).json({ ok: false, message: "No pending order found" });
+      return res.status(403).json({
+        ok: false,
+        message: "Order limit reached. Upgrade VIP or contact admin.",
+        completedOrders: user.ordersCompleted,
+        limit: vip.ordersLimit,
+        vipRank: vip.rank,
+      });
     }
-    
+
+    const pending = await UserOrder.findOne({
+      user: userId,
+      status: "PENDING",
+    });
+
+    if (!pending) {
+      return res.status(400).json({
+        ok: false,
+        message: "No pending order found",
+      });
+    }
+
     const triggerCountUsed = Number(user.ordersCompleted || 0) + 1;
-    
-    // ✅ insufficient points
+
+    // ✅ Check available balance: real balance + remaining trial bonus
     const realBalance = Number(user.balance || 0);
     const trialBonusRemaining = await getTrialBonusRemaining(userId);
     const availableBalance = realBalance + trialBonusRemaining;
-    
+
     if (availableBalance < pending.price) {
       return res.status(200).json({
         ok: false,
@@ -356,13 +371,14 @@ const vip = await getVipSettings(user);
         trialBonusRemaining,
       });
     }
-    
-    // ✅ ONLY reward commission (do not deduct price)
+
+    // ✅ ONLY reward commission, do not deduct order price
     user.balance += pending.commission;
     user.ordersCompleted += 1;
+
     pending.status = "COMPLETED";
     pending.completedAt = new Date();
-    
+
     if (pending.isBonus) {
       await BonusRule.updateOne(
         {
@@ -376,50 +392,53 @@ const vip = await getVipSettings(user);
         }
       );
     }
-        
+
     // ✅ Auto trial reversal when user finishes required orders
-if (user.ordersCompleted >= vip.ordersLimit) {
-  const trialRows = await WalletTransaction.aggregate([
-    {
-      $match: {
-        userId: new mongoose.Types.ObjectId(user._id),
-        type: "TRIAL_CREDIT",
-      },
-    },
-    { $group: { _id: null, total: { $sum: "$amount" } } },
-  ]);
-
-  const trialTotal = Number(trialRows[0]?.total || 0);
-
-  if (trialTotal > 0) {
-    // Prevent duplicate reversals: only reverse if not already reversed fully
-    const revRows = await WalletTransaction.aggregate([
-      {
-        $match: {
-          userId: new mongoose.Types.ObjectId(user._id),
-          type: "TRIAL_REVERSAL",
+    if (user.ordersCompleted >= vip.ordersLimit) {
+      const trialRows = await WalletTransaction.aggregate([
+        {
+          $match: {
+            userId: new mongoose.Types.ObjectId(user._id),
+            type: { $in: ["TRIAL_CREDIT", "TRIAL_REVERSAL"] },
+          },
         },
-      },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
-    ]);
+        {
+          $group: {
+            _id: "$type",
+            total: { $sum: "$amount" },
+          },
+        },
+      ]);
 
-    const reversedTotal = Math.abs(Number(revRows[0]?.total || 0));
-    const remaining = Math.max(0, trialTotal - reversedTotal);
+      let trialTotal = 0;
+      let reversedTotal = 0;
 
-    if (remaining > 0) {
-      await WalletTransaction.create({
-        userId: user._id,
-        type: "TRIAL_REVERSAL",
-        amount: -remaining,
-        balanceBefore: user.balance,
-        balanceAfter: user.balance,
-        note: "Trial bonus expired (orders completed)",
-      });
+      for (const row of trialRows) {
+        if (row._id === "TRIAL_CREDIT") {
+          trialTotal = Number(row.total || 0);
+        }
+
+        if (row._id === "TRIAL_REVERSAL") {
+          reversedTotal = Math.abs(Number(row.total || 0));
+        }
+      }
+
+      const remaining = Math.max(0, trialTotal - reversedTotal);
+
+      if (remaining > 0) {
+        await WalletTransaction.create({
+          userId: user._id,
+          type: "TRIAL_REVERSAL",
+          amount: -remaining,
+          balanceBefore: user.balance,
+          balanceAfter: user.balance,
+          note: "Trial bonus expired (orders completed)",
+        });
+      }
     }
-  }
-}
 
     user.ordersLimit = vip.ordersLimit;
+
     await user.save();
     await pending.save();
 
@@ -439,6 +458,8 @@ if (user.ordersCompleted >= vip.ordersLimit) {
 }
 
 async function orderHistory(req, res) {
+  const startedAt = Date.now();
+
   try {
     const userId = req.user.userId;
 
@@ -455,8 +476,13 @@ async function orderHistory(req, res) {
       query.status = status;
     }
 
+    console.time("HISTORY_FIND_AND_COUNT");
+
     const [orders, total] = await Promise.all([
       UserOrder.find(query)
+        .select(
+          "_id status orderNumber orderName price commission isBonus completedAt createdAt updatedAt imageUrl imageKey poolOrder"
+        )
         .populate("poolOrder", "imageUrl imageKey")
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -466,30 +492,35 @@ async function orderHistory(req, res) {
       UserOrder.countDocuments(query),
     ]);
 
-    const normalizedOrders = await Promise.all(
-      orders.map(async (order) => {
-        let imageUrl = order.imageUrl || "";
+    console.timeEnd("HISTORY_FIND_AND_COUNT");
 
-        if (!imageUrl && order.poolOrder) {
-          imageUrl = await resolveOrderImage(order.poolOrder);
-        }
+    console.time("HISTORY_NORMALIZE");
 
-        return {
-          _id: order._id,
-          status: order.status,
-          orderNumber: order.orderNumber,
-          orderName: order.orderName,
-          price: order.price,
-          commission: order.commission,
-          isBonus: order.isBonus,
-          completedAt: order.completedAt,
-          createdAt: order.createdAt,
-          updatedAt: order.updatedAt,
-          imageUrl,
-          imageKey: order.imageKey || order.poolOrder?.imageKey || "",
-        };
-      })
-    );
+    const normalizedOrders = orders.map((order) => {
+      const imageUrl =
+        order.imageUrl ||
+        order.poolOrder?.imageUrl ||
+        "";
+
+      return {
+        _id: order._id,
+        status: order.status,
+        orderNumber: order.orderNumber,
+        orderName: order.orderName,
+        price: order.price,
+        commission: order.commission,
+        isBonus: order.isBonus,
+        completedAt: order.completedAt,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
+        imageUrl,
+        imageKey: order.imageKey || order.poolOrder?.imageKey || "",
+      };
+    });
+
+    console.timeEnd("HISTORY_NORMALIZE");
+
+    console.log(`✅ /orders/history finished in ${Date.now() - startedAt}ms`);
 
     return res.json({
       ok: true,
