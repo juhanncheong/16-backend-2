@@ -400,11 +400,9 @@ exports.createWithdrawal = async (req, res) => {
       throw new Error("Invalid withdrawal method");
     }
 
-    await ensureWithdrawalMethods(session);
-
     const methodConfig = await WithdrawalMethodConfig.findOne({
       method: selectedMethod,
-    }).session(session);
+    }).lean();
 
     if (methodConfig && !methodConfig.isAvailable) {
       await session.abortTransaction();
