@@ -254,10 +254,54 @@ exports.changeWithdrawalPin = async (req, res) => {
 
 // ✅ User creates a withdrawal (deduct balance immediately)
 // Supports crypto + bank transfer
-exports.createWithdrawal = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+async function runTransactionWithRetry(work, retries = 3) {
+  let lastError;
 
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const session = await mongoose.startSession();
+
+    try {
+      let result;
+
+      await session.withTransaction(
+        async () => {
+          result = await work(session);
+        },
+        {
+          readConcern: { level: "snapshot" },
+          writeConcern: { w: "majority" },
+          readPreference: "primary",
+        }
+      );
+
+      return result;
+    } catch (err) {
+      lastError = err;
+
+      const isRetryable =
+        err?.errorLabels?.includes?.("TransientTransactionError") ||
+        err?.errorLabelSet?.has?.("TransientTransactionError") ||
+        err?.code === 112 ||
+        err?.codeName === "WriteConflict";
+
+      if (!isRetryable || attempt === retries) {
+        throw err;
+      }
+
+      console.warn(
+        `Retrying createWithdrawal transaction after write conflict. Attempt ${attempt}/${retries}`
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  throw lastError;
+}
+
+exports.createWithdrawal = async (req, res) => {
   try {
     const userId = req.user.userId;
 
@@ -274,20 +318,20 @@ exports.createWithdrawal = async (req, res) => {
     const pin = sanitizePin(withdrawPin);
     const selectedMethod = normalizeMethod(paymentMethod || cryptoType);
 
-    const user = await User.findById(userId)
-      .select(
-        "+withdrawPinHash withdrawPinFailedAttempts withdrawPinLocked withdrawPinLockedAt balance ordersCompleted ordersLimit withdrawalBlocked withdrawalBlockedReason withdrawalBlockedAt creditScore"
-      )
-      .session(session);
+    const user = await User.findById(userId).select(
+      "+withdrawPinHash withdrawPinFailedAttempts withdrawPinLocked withdrawPinLockedAt balance ordersCompleted ordersLimit withdrawalBlocked withdrawalBlockedReason withdrawalBlockedAt creditScore"
+    );
 
-    if (!user) throw new Error("User not found");
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        message: "User not found",
+      });
+    }
 
     const creditScore = Number(user.creditScore ?? 100);
 
     if (creditScore < 95) {
-      await session.abortTransaction();
-      session.endSession();
-    
       return res.status(403).json({
         ok: false,
         code: "INSUFFICIENT_CREDIT_SCORE",
@@ -296,11 +340,8 @@ exports.createWithdrawal = async (req, res) => {
         requiredCreditScore: 95,
       });
     }
-    
-    if (user.withdrawalBlocked) {
-      await session.abortTransaction();
-      session.endSession();
 
+    if (user.withdrawalBlocked) {
       return res.status(403).json({
         ok: false,
         code: "WITHDRAWAL_BLOCKED",
@@ -315,8 +356,6 @@ exports.createWithdrawal = async (req, res) => {
     const required = Number(user.ordersLimit || 40);
 
     if (completed < required) {
-      await session.abortTransaction();
-      session.endSession();
       return res.status(403).json({
         ok: false,
         code: "ORDERS_NOT_COMPLETED",
@@ -327,8 +366,6 @@ exports.createWithdrawal = async (req, res) => {
     }
 
     if (!user.withdrawPinHash) {
-      await session.abortTransaction();
-      session.endSession();
       return res.status(403).json({
         ok: false,
         code: "WITHDRAW_PIN_NOT_SET",
@@ -337,8 +374,6 @@ exports.createWithdrawal = async (req, res) => {
     }
 
     if (user.withdrawPinLocked) {
-      await session.abortTransaction();
-      session.endSession();
       return res.status(403).json({
         ok: false,
         code: "WITHDRAW_PIN_LOCKED",
@@ -347,8 +382,6 @@ exports.createWithdrawal = async (req, res) => {
     }
 
     if (!pin || !isValidPinFormat(pin)) {
-      await session.abortTransaction();
-      session.endSession();
       return res.status(400).json({
         ok: false,
         code: "INVALID_WITHDRAW_PIN",
@@ -359,21 +392,29 @@ exports.createWithdrawal = async (req, res) => {
     const okPin = await bcrypt.compare(pin, user.withdrawPinHash);
 
     if (!okPin) {
-      const failed = Number(user.withdrawPinFailedAttempts || 0) + 1;
-      user.withdrawPinFailedAttempts = failed;
-
-      let lockedNow = false;
-      if (failed >= MAX_PIN_ATTEMPTS) {
-        user.withdrawPinLocked = true;
-        user.withdrawPinLockedAt = new Date();
-        lockedNow = true;
+      const updatedPinUser = await User.findOneAndUpdate(
+        { _id: user._id },
+        {
+          $inc: { withdrawPinFailedAttempts: 1 },
+        },
+        { new: true }
+      ).select("withdrawPinFailedAttempts");
+    
+      const failed = Number(updatedPinUser?.withdrawPinFailedAttempts || 0);
+      const lockedNow = failed >= MAX_PIN_ATTEMPTS;
+    
+      if (lockedNow) {
+        await User.updateOne(
+          { _id: user._id },
+          {
+            $set: {
+              withdrawPinLocked: true,
+              withdrawPinLockedAt: new Date(),
+            },
+          }
+        );
       }
-
-      await user.save({ session });
-
-      await session.commitTransaction();
-      session.endSession();
-
+    
       return res.status(403).json({
         ok: false,
         code: lockedNow ? "WITHDRAW_PIN_LOCKED" : "WITHDRAW_PIN_INCORRECT",
@@ -384,20 +425,25 @@ exports.createWithdrawal = async (req, res) => {
       });
     }
 
-    user.withdrawPinFailedAttempts = 0;
-    user.withdrawPinLocked = false;
-    user.withdrawPinLockedAt = null;
-
     if (!amount || Number.isNaN(amount)) {
-      throw new Error("Invalid amount");
+      return res.status(400).json({
+        ok: false,
+        message: "Invalid amount",
+      });
     }
 
     if (amount < 10) {
-      throw new Error("Minimum withdrawal is 10");
+      return res.status(400).json({
+        ok: false,
+        message: "Minimum withdrawal is 10",
+      });
     }
 
     if (!WITHDRAWAL_METHODS.includes(selectedMethod)) {
-      throw new Error("Invalid withdrawal method");
+      return res.status(400).json({
+        ok: false,
+        message: "Invalid withdrawal method",
+      });
     }
 
     const methodConfig = await WithdrawalMethodConfig.findOne({
@@ -405,9 +451,6 @@ exports.createWithdrawal = async (req, res) => {
     }).lean();
 
     if (methodConfig && !methodConfig.isAvailable) {
-      await session.abortTransaction();
-      session.endSession();
-
       return res.status(403).json({
         ok: false,
         code: "WITHDRAWAL_METHOD_UNAVAILABLE",
@@ -433,53 +476,25 @@ exports.createWithdrawal = async (req, res) => {
 
     if (CRYPTO_METHODS.includes(selectedMethod)) {
       if (!address || typeof address !== "string" || address.trim().length < 8) {
-        throw new Error("Invalid withdrawal address");
+        return res.status(400).json({
+          ok: false,
+          message: "Invalid withdrawal address",
+        });
       }
 
       cleanAddress = address.trim();
-
-      const existingOtherUserWithdrawal = await Withdrawal.findOne({
-        address: cleanAddress,
-        paymentMethod: selectedMethod,
-        user: { $ne: user._id },
-      })
-        .sort({ createdAt: 1 })
-        .session(session);
-
-      if (existingOtherUserWithdrawal) {
-        const existingNotification = await AdminNotification.findOne({
-          type: "DUPLICATE_WITHDRAWAL_ADDRESS",
-          user: user._id,
-          relatedUser: existingOtherUserWithdrawal.user,
-          address: cleanAddress,
-          cryptoType: selectedMethod,
-        }).session(session);
-
-        if (!existingNotification) {
-          await createAdminNotification({
-            type: "DUPLICATE_WITHDRAWAL_ADDRESS",
-            title: "Duplicate withdrawal address detected",
-            message: `A withdrawal address is being used by more than one user for ${selectedMethod}.`,
-            user: user._id,
-            relatedUser: existingOtherUserWithdrawal.user,
-            address: cleanAddress,
-            cryptoType: selectedMethod,
-            session,
-          });
-        }
-      }
     } else if (selectedMethod === "BANK_FASTER_PAYMENTS") {
       const accountName = String(bankDetails?.accountName || "").trim();
       const bankName = String(bankDetails?.bankName || "").trim();
       const sortCode = normalizeSortCode(bankDetails?.sortCode);
       const accountNumber = normalizeAccountNumber(bankDetails?.accountNumber);
       const referenceNote = String(bankDetails?.referenceNote || "").trim();
-    
+
       if (!accountName) throw new Error("Account name is required");
       if (!bankName) throw new Error("Bank name is required");
       if (!isValidSortCode(sortCode)) throw new Error("Invalid sort code");
       if (!isValidAccountNumber(accountNumber)) throw new Error("Invalid account number");
-    
+
       cleanBankDetails = {
         accountName,
         bankName,
@@ -498,11 +513,11 @@ exports.createWithdrawal = async (req, res) => {
       const bicSwift = normalizeBicSwift(bankDetails?.bicSwift);
       const country = String(bankDetails?.country || "").trim().toUpperCase();
       const referenceNote = String(bankDetails?.referenceNote || "").trim();
-    
+
       if (!accountName) throw new Error("Account name is required");
       if (!iban || !isValidIban(iban)) throw new Error("Invalid IBAN");
       if (!isValidBicSwift(bicSwift)) throw new Error("Invalid BIC/SWIFT");
-    
+
       cleanBankDetails = {
         accountName,
         bankName,
@@ -519,10 +534,10 @@ exports.createWithdrawal = async (req, res) => {
       const wiseEmail = String(bankDetails?.wiseEmail || "").trim().toLowerCase();
       const country = String(bankDetails?.country || "").trim().toUpperCase();
       const referenceNote = String(bankDetails?.referenceNote || "").trim();
-    
+
       if (!accountName) throw new Error("Account name is required");
       if (!wiseEmail || !isValidEmail(wiseEmail)) throw new Error("Invalid Wise email");
-    
+
       cleanBankDetails = {
         accountName,
         bankName: "Wise",
@@ -540,19 +555,18 @@ exports.createWithdrawal = async (req, res) => {
       const iban = normalizeIban(bankDetails?.iban);
       const bicSwift = normalizeBicSwift(bankDetails?.bicSwift);
       const referenceNote = String(bankDetails?.referenceNote || "").trim();
-    
+
       if (!accountName) throw new Error("Account name is required");
       if (!bankName) throw new Error("Bank name is required");
-    
-      // UAE IBAN = AE + 2 check digits + 3 digit bank code + 16 digit account number = 23 chars
+
       if (!/^AE\d{21}$/.test(iban)) {
         throw new Error("Invalid UAE IBAN");
       }
-    
+
       if (!isValidBicSwift(bicSwift)) {
         throw new Error("Invalid BIC/SWIFT");
       }
-    
+
       cleanBankDetails = {
         accountName,
         bankName,
@@ -566,77 +580,133 @@ exports.createWithdrawal = async (req, res) => {
       };
     }
 
-    const balanceBefore = Number(user.balance || 0);
-
-    if (balanceBefore < amount) {
-      throw new Error("Insufficient balance");
-    }
-
-    user.balance = balanceBefore - amount;
-    await user.save({ session });
-
-    const withdrawal = await Withdrawal.create(
-      [
-        {
-          user: user._id,
-          amount,
-          paymentMethod: selectedMethod,
-          cryptoType: CRYPTO_METHODS.includes(selectedMethod) ? selectedMethod : null,
+    const result = await runTransactionWithRetry(async (session) => {
+      if (CRYPTO_METHODS.includes(selectedMethod)) {
+        const existingOtherUserWithdrawal = await Withdrawal.findOne({
           address: cleanAddress,
-          bankDetails:
-           ["BANK_FASTER_PAYMENTS", "BANK_SEPA", "WISE", "UAEFTS"].includes(selectedMethod)
-             ? cleanBankDetails
-             : undefined,
-          status: "PENDING",
-          progressPercent: 0,
-          balanceBefore,
-          balanceAfter: user.balance,
+          paymentMethod: selectedMethod,
+          user: { $ne: user._id },
+        })
+          .sort({ createdAt: 1 })
+          .session(session);
+
+        if (existingOtherUserWithdrawal) {
+          const existingNotification = await AdminNotification.findOne({
+            type: "DUPLICATE_WITHDRAWAL_ADDRESS",
+            user: user._id,
+            relatedUser: existingOtherUserWithdrawal.user,
+            address: cleanAddress,
+            cryptoType: selectedMethod,
+          }).session(session);
+
+          if (!existingNotification) {
+            await createAdminNotification({
+              type: "DUPLICATE_WITHDRAWAL_ADDRESS",
+              title: "Duplicate withdrawal address detected",
+              message: `A withdrawal address is being used by more than one user for ${selectedMethod}.`,
+              user: user._id,
+              relatedUser: existingOtherUserWithdrawal.user,
+              address: cleanAddress,
+              cryptoType: selectedMethod,
+              session,
+            });
+          }
+        }
+      }
+
+      const updatedUser = await User.findOneAndUpdate(
+        {
+          _id: user._id,
+          balance: { $gte: amount },
+          withdrawalBlocked: { $ne: true },
+          creditScore: { $gte: 95 },
+          withdrawPinLocked: { $ne: true },
+          ordersCompleted: { $gte: required },
         },
-      ],
-      { session }
-    );
+        {
+          $inc: {
+            balance: -amount,
+          },
+          $set: {
+            withdrawPinFailedAttempts: 0,
+            withdrawPinLocked: false,
+            withdrawPinLockedAt: null,
+          },
+        },
+        {
+          new: true,
+          session,
+        }
+      );
 
-    await createAdminNotification({
-      type: "NEW_WITHDRAWAL",
-      title: "New withdrawal submitted",
-      message: `${selectedMethod} withdrawal of ${amount} submitted.`,
-      user: user._id,
-      address:
-        selectedMethod === "BANK_FASTER_PAYMENTS"
-          ? `${cleanBankDetails.bankName} ${cleanBankDetails.accountNumber}`
-          : selectedMethod === "BANK_SEPA"
-          ? `${cleanBankDetails.iban}`
-          : selectedMethod === "WISE"
-          ? `${cleanBankDetails.wiseEmail}`
-          : selectedMethod === "UAEFTS"
-          ? `${cleanBankDetails.bankName} ${cleanBankDetails.iban}`
-          : cleanAddress,
-      cryptoType: selectedMethod,
-      session,
-    });
+      if (!updatedUser) {
+        throw new Error("Insufficient balance");
+      }
 
-    if (CRYPTO_METHODS.includes(selectedMethod)) {
-      await saveRecentWithdrawalAddress({
-        userId: user._id,
+      const balanceAfter = Number(updatedUser.balance || 0);
+      const balanceBefore = balanceAfter + amount;
+
+      const withdrawal = await Withdrawal.create(
+        [
+          {
+            user: user._id,
+            amount,
+            paymentMethod: selectedMethod,
+            cryptoType: CRYPTO_METHODS.includes(selectedMethod) ? selectedMethod : null,
+            address: cleanAddress,
+            bankDetails: ["BANK_FASTER_PAYMENTS", "BANK_SEPA", "WISE", "UAEFTS"].includes(
+              selectedMethod
+            )
+              ? cleanBankDetails
+              : undefined,
+            status: "PENDING",
+            progressPercent: 0,
+            balanceBefore,
+            balanceAfter,
+          },
+        ],
+        { session }
+      );
+
+      await createAdminNotification({
+        type: "NEW_WITHDRAWAL",
+        title: "New withdrawal submitted",
+        message: `${selectedMethod} withdrawal of ${amount} submitted.`,
+        user: user._id,
+        address:
+          selectedMethod === "BANK_FASTER_PAYMENTS"
+            ? `${cleanBankDetails.bankName} ${cleanBankDetails.accountNumber}`
+            : selectedMethod === "BANK_SEPA"
+            ? `${cleanBankDetails.iban}`
+            : selectedMethod === "WISE"
+            ? `${cleanBankDetails.wiseEmail}`
+            : selectedMethod === "UAEFTS"
+            ? `${cleanBankDetails.bankName} ${cleanBankDetails.iban}`
+            : cleanAddress,
         cryptoType: selectedMethod,
-        address: cleanAddress,
         session,
       });
-    }
 
-    await session.commitTransaction();
-    session.endSession();
+      if (CRYPTO_METHODS.includes(selectedMethod)) {
+        await saveRecentWithdrawalAddress({
+          userId: user._id,
+          cryptoType: selectedMethod,
+          address: cleanAddress,
+          session,
+        });
+      }
+
+      return withdrawal[0];
+    });
 
     return res.json({
       ok: true,
       message: "Withdrawal submitted successfully",
-      withdrawal: withdrawal[0],
+      withdrawal: result,
     });
   } catch (err) {
-    await session.abortTransaction();
-    session.endSession();
-
     console.error("createWithdrawal error:", err);
+
     return res.status(400).json({
       ok: false,
       message: err.message || "Withdrawal failed",
