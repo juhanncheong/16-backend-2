@@ -11,6 +11,7 @@ const ChatMessageSchema = new mongoose.Schema(
     status: { type: String, default: "sent" },
     type: { type: String, enum: ["text", "image"], default: "text" },
     imageUrl: { type: String, default: "" },
+    imagePublicId: { type: String, default: "" },
     fileName: { type: String, default: "" },
     adminRead: { type: Boolean, default: false, index: true },
     userRead: { type: Boolean, default: false, index: true },

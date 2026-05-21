@@ -1,8 +1,6 @@
 const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
-const path = require("path");
-const fs = require("fs");
 const connectDB = require("./config/db");
 
 const adminRoutes = require("./routes/adminRoutes");
@@ -38,13 +36,6 @@ async function startServer() {
 
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
-
-  // create uploads/chat folder if missing
-  const uploadsDir = path.join(__dirname, "uploads", "chat");
-  fs.mkdirSync(uploadsDir, { recursive: true });
-
-  // serve uploaded files
-  app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
   // CORS
   app.use(cors({ origin: true, credentials: true }));

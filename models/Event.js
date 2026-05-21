@@ -5,6 +5,7 @@ const eventSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true, maxlength: 120 },
     description: { type: String, required: true, trim: true, maxlength: 3000 },
     imageUrl: { type: String, required: true, trim: true },
+    imagePublicId: { type: String, trim: true },
   },
   { timestamps: true }
 );

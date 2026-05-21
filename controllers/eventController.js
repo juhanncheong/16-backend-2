@@ -1,9 +1,5 @@
 const Event = require("../models/Event");
-
-function buildImageUrl(req, file) {
-  if (!file) return "";
-  return `${req.protocol}://${req.get("host")}/uploads/events/${file.filename}`;
-}
+const cloudinary = require("../config/cloudinary");
 
 // ✅ Admin: Create new event
 exports.createEvent = async (req, res) => {
@@ -13,9 +9,20 @@ exports.createEvent = async (req, res) => {
 
     // allow either uploaded file or manual imageUrl
     let imageUrl = String(req.body.imageUrl || "").trim();
+    let imagePublicId = String(req.body.imagePublicId || "").trim();
 
     if (req.file) {
-      imageUrl = buildImageUrl(req, req.file);
+      // delete old Cloudinary image
+      if (existing.imagePublicId) {
+        try {
+          await cloudinary.uploader.destroy(existing.imagePublicId);
+        } catch (e) {
+          console.error("Cloudinary old event image delete error:", e);
+        }
+      }
+    
+      imageUrl = req.file.path;
+      imagePublicId = req.file.filename;
     }
 
     if (!name || !description || !imageUrl) {
@@ -29,6 +36,7 @@ exports.createEvent = async (req, res) => {
       name,
       description,
       imageUrl,
+      imagePublicId,
     });
 
     return res.status(201).json({
@@ -80,9 +88,12 @@ exports.updateEvent = async (req, res) => {
     }
 
     let imageUrl = String(req.body.imageUrl || "").trim() || existing.imageUrl;
-
+    let imagePublicId =
+      String(req.body.imagePublicId || "").trim() || existing.imagePublicId;
+    
     if (req.file) {
-      imageUrl = buildImageUrl(req, req.file);
+      imageUrl = req.file.path;          // Cloudinary URL
+      imagePublicId = req.file.filename; // Cloudinary public_id
     }
 
     if (!name || !description || !imageUrl) {
@@ -95,6 +106,7 @@ exports.updateEvent = async (req, res) => {
     existing.name = name;
     existing.description = description;
     existing.imageUrl = imageUrl;
+    existing.imagePublicId = imagePublicId;
 
     await existing.save();
 
@@ -113,7 +125,7 @@ exports.deleteEvent = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const deleted = await Event.findByIdAndDelete(id);
+    const deleted = await Event.findById(id);
 
     if (!deleted) {
       return res.status(404).json({
@@ -121,6 +133,16 @@ exports.deleteEvent = async (req, res) => {
         message: "Event not found",
       });
     }
+    
+    if (deleted.imagePublicId) {
+      try {
+        await cloudinary.uploader.destroy(deleted.imagePublicId);
+      } catch (e) {
+        console.error("Cloudinary event image delete error:", e);
+      }
+    }
+    
+    await Event.deleteOne({ _id: id });
 
     res.json({
       success: true,

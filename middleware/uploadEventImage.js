@@ -1,22 +1,12 @@
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
+const { CloudinaryStorage } = require("multer-storage-cloudinary");
+const cloudinary = require("../config/cloudinary");
 
-const uploadDir = path.join(__dirname, "../uploads/events");
-fs.mkdirSync(uploadDir, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname || "").toLowerCase();
-    const base = path
-      .basename(file.originalname || "event-image", ext)
-      .replace(/[^a-zA-Z0-9-_]/g, "-")
-      .slice(0, 60);
-
-    cb(null, `${Date.now()}-${base}${ext}`);
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: "events",
+    allowed_formats: ["jpg", "png", "jpeg", "webp"],
   },
 });
 
@@ -31,6 +21,6 @@ module.exports = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB
+    fileSize: 5 * 1024 * 1024, // keep your 5MB limit
   },
 });

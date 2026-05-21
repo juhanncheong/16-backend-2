@@ -1,25 +1,18 @@
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
+const { CloudinaryStorage } = require("multer-storage-cloudinary");
+const cloudinary = require("../config/cloudinary");
 
 const ChatMessage = require("../models/ChatMessage");
 const AdminNote = require("../models/AdminNote");
 const User = require("../models/User");
 
-const uploadDir = path.join(__dirname, "../uploads/chat");
-fs.mkdirSync(uploadDir, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname || "");
-    const safeExt = ext || ".jpg";
-    cb(
-      null,
-      `chat_${Date.now()}_${Math.random().toString(16).slice(2)}${safeExt}`
-    );
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: "chat",
+    allowed_formats: ["jpg", "jpeg", "png", "webp"],
   },
 });
 
@@ -318,7 +311,8 @@ router.post("/upload", upload.single("image"), async (req, res) => {
     }
 
     const createdAt = new Date();
-    const imageUrl = `/uploads/chat/${req.file.filename}`;
+    const imageUrl = req.file.path;
+    const imagePublicId = req.file.filename;
 
     const user = await User.findById(userId)
      .select("uid phoneNumber")
@@ -333,6 +327,7 @@ router.post("/upload", upload.single("image"), async (req, res) => {
       createdAt,
       status: "sent",
       type: "image",
+      imagePublicId,
       imageUrl,
       fileName: req.file.originalname || "",
       adminRead: sender === "admin",
@@ -436,15 +431,13 @@ router.delete("/messages/:messageId/image", async (req, res) => {
     }
 
     const userId = String(row.userId || "");
-    const imageUrl = String(row.imageUrl || "");
 
-    // delete physical image file from uploads/chat
-    if (imageUrl.startsWith("/uploads/chat/")) {
-      const filename = path.basename(imageUrl);
-      const filePath = path.join(uploadDir, filename);
-
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+    // delete image from Cloudinary
+    if (row.imagePublicId) {
+      try {
+        await cloudinary.uploader.destroy(row.imagePublicId);
+      } catch (e) {
+        console.error("Cloudinary delete error:", e);
       }
     }
 
