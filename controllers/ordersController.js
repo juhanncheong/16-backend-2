@@ -479,6 +479,8 @@ async function submitOrder(req, res) {
           balance: Number(user.balance || 0),
           displayBalance: Number(user.balance || 0),
           availableBalance: Number(user.balance || 0),
+          shortBalance: Number(user.balance || 0),
+          pendingAmount: 0,
           role: user.role,
         },
       });
