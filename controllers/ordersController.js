@@ -298,6 +298,31 @@ async function searchFlights(req, res) {
       created.isBonus
     );
 
+    try {
+      const io = req.app.get("io");
+    
+      io?.to("admins").emit("admin:userBalanceUpdated", {
+        userId: user._id.toString(),
+        user: {
+          _id: user._id.toString(),
+          phoneNumber: user.phoneNumber,
+    
+          // real balance stays same
+          balance: Number(user.balance || 0),
+    
+          // this is what admin should display live
+          displayBalance: Number(stats.shortBalance || 0),
+          availableBalance: Number(stats.availableBalance || 0),
+          shortBalance: Number(stats.shortBalance || 0),
+          pendingAmount: Number(stats.pendingAmount || 0),
+    
+          role: user.role,
+        },
+      });
+    } catch (socketErr) {
+      console.error("searchFlights socket emit failed:", socketErr.message);
+    }
+
     return res.json({
       ok: true,
       status: created.status,
