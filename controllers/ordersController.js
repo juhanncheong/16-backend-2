@@ -443,36 +443,24 @@ async function submitOrder(req, res) {
     await pending.save();
 
     // ✅ Socket: notify admin panel balance changed after user completed order
-try {
-  const io = req.app.get("io");
-
-  console.log("[submitOrder] saved user balance:", {
-    userId: user._id.toString(),
-    phoneNumber: user.phoneNumber,
-    balance: Number(user.balance || 0),
-    commission: Number(pending.commission || 0),
-    hasIo: !!io,
-  });
-
-  io?.to("admins").emit("admin:userBalanceUpdated", {
-    userId: user._id.toString(),
-    user: {
-      _id: user._id.toString(),
-      phoneNumber: user.phoneNumber,
-      balance: Number(user.balance || 0),
-      displayBalance: Number(user.balance || 0),
-      availableBalance: Number(user.balance || 0),
-      role: user.role,
-    },
-  });
-
-  console.log("[Socket Emit] admin:userBalanceUpdated sent:", {
-    userId: user._id.toString(),
-    balance: Number(user.balance || 0),
-  });
-} catch (socketErr) {
-  console.error("submitOrder admin:userBalanceUpdated socket emit failed:", socketErr);
-}
+    try {
+      const io = req.app.get("io");
+    
+      io?.to("admins").emit("admin:userBalanceUpdated", {
+        userId: user._id.toString(),
+        user: {
+          _id: user._id.toString(),
+          phoneNumber: user.phoneNumber,
+          balance: Number(user.balance || 0),
+          displayBalance: Number(user.balance || 0),
+          availableBalance: Number(user.balance || 0),
+          role: user.role,
+        },
+      });
+    
+    } catch (socketErr) {
+      console.error("submitOrder admin:userBalanceUpdated socket emit failed:", socketErr);
+    }
 
     return res.json({
       ok: true,
