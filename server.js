@@ -20,6 +20,7 @@ const userLuckyDrawRuleRoutes = require("./routes/userLuckyDrawRuleRoutes");
 const adminNotificationsRoutes = require("./routes/adminNotificationsRoutes");
 const pushRoutes = require("./routes/pushRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
+const targetedBonusRoutes = require("./routes/targetedBonusRoutes");
 
 const http = require("http");
 const { Server } = require("socket.io");
@@ -58,6 +59,7 @@ async function startServer() {
   app.use("/api/lucky-draw", userLuckyDrawRuleRoutes);
   app.use("/api/admin/notifications", adminNotificationsRoutes);
   app.use("/api", notificationRoutes);
+  app.use("/api/targeted-bonus", targetedBonusRoutes);
   
   const server = http.createServer(app);
 

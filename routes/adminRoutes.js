@@ -1949,4 +1949,229 @@ router.patch("/popups/:id/active", protect, adminOnly, async (req, res) => {
   }
 });
 
+/**
+ * ============================
+ * ✅ TARGETED BONUS OFFER
+ * ============================
+ */
+
+// ✅ Admin create targeted bonus offer for specific user by UID
+router.post("/users/:uid/targeted-bonus-offers", protect, adminOnly, async (req, res) => {
+  try {
+    const uid = String(req.params.uid || "").trim();
+    const { title, description, options } = req.body || {};
+
+    if (!uid) {
+      return res.status(400).json({
+        ok: false,
+        message: "uid is required",
+      });
+    }
+
+    if (!title || !String(title).trim()) {
+      return res.status(400).json({
+        ok: false,
+        message: "title is required",
+      });
+    }
+
+    if (!description || !String(description).trim()) {
+      return res.status(400).json({
+        ok: false,
+        message: "description is required",
+      });
+    }
+
+    if (!Array.isArray(options) || options.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        message: "At least one deposit/bonus option is required",
+      });
+    }
+
+    const user = await User.findOne({ uid }).select("_id uid phoneNumber");
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        message: "User not found",
+      });
+    }
+
+    const cleanOptions = options.map((item) => {
+      const depositAmount = Number(item.depositAmount);
+      const bonusAmount = Number(item.bonusAmount);
+
+      if (!Number.isFinite(depositAmount) || depositAmount <= 0) {
+        throw new Error("Invalid deposit amount");
+      }
+
+      if (!Number.isFinite(bonusAmount) || bonusAmount < 0) {
+        throw new Error("Invalid bonus amount");
+      }
+
+      return {
+        depositAmount,
+        bonusAmount,
+        isFull: Boolean(item.isFull),
+      };
+    });
+
+    const offer = await TargetedBonusOffer.create({
+      user: user._id, // still save Mongo ID internally
+      title: String(title).trim(),
+      description: String(description).trim(),
+      options: cleanOptions,
+      createdByAdmin: req.user?.userId || null,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      message: "✅ Targeted bonus offer created",
+      offer,
+      targetUser: {
+        _id: user._id,
+        uid: user.uid,
+        phoneNumber: user.phoneNumber,
+      },
+    });
+  } catch (err) {
+    console.error("create targeted bonus offer error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
+// ✅ Admin list targeted bonus offers
+router.get("/targeted-bonus-offers", protect, adminOnly, async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page || "1", 10));
+    const limit = Math.max(1, parseInt(req.query.limit || "10", 10));
+    const uid = String(req.query.uid || "").trim();
+    const status = String(req.query.status || "").trim();
+
+    const skip = (page - 1) * limit;
+
+    const filter = {};
+
+    if (status && ["active", "reserved", "cancelled"].includes(status)) {
+      filter.status = status;
+    }
+
+    if (uid) {
+      const user = await User.findOne({ uid }).select("_id uid phoneNumber").lean();
+
+      if (!user) {
+        return res.json({
+          ok: true,
+          rows: [],
+          user: null,
+          pagination: {
+            page,
+            limit,
+            total: 0,
+            totalPages: 1,
+          },
+        });
+      }
+
+      filter.user = user._id;
+    }
+
+    const [rows, total] = await Promise.all([
+      TargetedBonusOffer.find(filter)
+        .populate("user", "_id uid phoneNumber")
+        .populate("createdByAdmin", "_id uid phoneNumber role")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+
+      TargetedBonusOffer.countDocuments(filter),
+    ]);
+
+    return res.json({
+      ok: true,
+      rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    });
+  } catch (err) {
+    console.error("list targeted bonus offers error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
+// ✅ Admin cancel targeted bonus offer
+router.patch("/targeted-bonus-offers/:id/cancel", protect, adminOnly, async (req, res) => {
+  try {
+    const offer = await TargetedBonusOffer.findById(req.params.id);
+
+    if (!offer) {
+      return res.status(404).json({
+        ok: false,
+        message: "Targeted bonus offer not found",
+      });
+    }
+
+    if (offer.status === "reserved" || offer.isReserved) {
+      return res.status(400).json({
+        ok: false,
+        message: "Cannot cancel this offer because user already reserved it",
+      });
+    }
+
+    offer.status = "cancelled";
+    await offer.save();
+
+    return res.json({
+      ok: true,
+      message: "✅ Targeted bonus offer cancelled",
+      offer,
+    });
+  } catch (err) {
+    console.error("cancel targeted bonus offer error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
+// ✅ Admin get one targeted bonus offer detail
+router.get("/targeted-bonus-offers/:id", protect, adminOnly, async (req, res) => {
+  try {
+    const offer = await TargetedBonusOffer.findById(req.params.id)
+      .populate("user", "_id uid phoneNumber balance")
+      .populate("createdByAdmin", "_id uid phoneNumber role")
+      .lean();
+
+    if (!offer) {
+      return res.status(404).json({
+        ok: false,
+        message: "Targeted bonus offer not found",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      offer,
+    });
+  } catch (err) {
+    console.error("get targeted bonus offer detail error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
 module.exports = router;
