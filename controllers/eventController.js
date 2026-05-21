@@ -7,22 +7,12 @@ exports.createEvent = async (req, res) => {
     const name = String(req.body.name || "").trim();
     const description = String(req.body.description || "").trim();
 
-    // allow either uploaded file or manual imageUrl
     let imageUrl = String(req.body.imageUrl || "").trim();
     let imagePublicId = String(req.body.imagePublicId || "").trim();
 
     if (req.file) {
-      // delete old Cloudinary image
-      if (existing.imagePublicId) {
-        try {
-          await cloudinary.uploader.destroy(existing.imagePublicId);
-        } catch (e) {
-          console.error("Cloudinary old event image delete error:", e);
-        }
-      }
-    
-      imageUrl = req.file.path;
-      imagePublicId = req.file.filename;
+      imageUrl = req.file.path; // Cloudinary URL
+      imagePublicId = req.file.filename; // Cloudinary public_id
     }
 
     if (!name || !description || !imageUrl) {
@@ -72,9 +62,11 @@ exports.getEvents = async (req, res) => {
   }
 };
 
+// ✅ Admin: Update event
 exports.updateEvent = async (req, res) => {
   try {
     const { id } = req.params;
+
     const name = String(req.body.name || "").trim();
     const description = String(req.body.description || "").trim();
 
@@ -90,9 +82,17 @@ exports.updateEvent = async (req, res) => {
     let imageUrl = String(req.body.imageUrl || "").trim() || existing.imageUrl;
     let imagePublicId =
       String(req.body.imagePublicId || "").trim() || existing.imagePublicId;
-    
+
     if (req.file) {
-      imageUrl = req.file.path;          // Cloudinary URL
+      if (existing.imagePublicId) {
+        try {
+          await cloudinary.uploader.destroy(existing.imagePublicId);
+        } catch (e) {
+          console.error("Cloudinary old event image delete error:", e);
+        }
+      }
+
+      imageUrl = req.file.path; // Cloudinary URL
       imagePublicId = req.file.filename; // Cloudinary public_id
     }
 
@@ -110,17 +110,21 @@ exports.updateEvent = async (req, res) => {
 
     await existing.save();
 
-    res.json({
+    return res.json({
       success: true,
       message: "Event updated",
       event: existing,
     });
   } catch (err) {
     console.error("updateEvent error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    return res.status(500).json({
+      success: false,
+      message: "Server error updating event",
+    });
   }
 };
 
+// ✅ Admin: Delete event
 exports.deleteEvent = async (req, res) => {
   try {
     const { id } = req.params;
@@ -133,7 +137,7 @@ exports.deleteEvent = async (req, res) => {
         message: "Event not found",
       });
     }
-    
+
     if (deleted.imagePublicId) {
       try {
         await cloudinary.uploader.destroy(deleted.imagePublicId);
@@ -141,15 +145,18 @@ exports.deleteEvent = async (req, res) => {
         console.error("Cloudinary event image delete error:", e);
       }
     }
-    
+
     await Event.deleteOne({ _id: id });
 
-    res.json({
+    return res.json({
       success: true,
       message: "Event deleted",
     });
   } catch (err) {
     console.error("deleteEvent error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    return res.status(500).json({
+      success: false,
+      message: "Server error deleting event",
+    });
   }
 };
