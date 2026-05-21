@@ -442,7 +442,7 @@ async function submitOrder(req, res) {
     await user.save();
     await pending.save();
 
-    // ✅ Socket: notify admin panel balance changed after user completed order
+    // ✅ Socket: notify admin panel balance + order count changed after user completed order
     try {
       const io = req.app.get("io");
     
@@ -458,8 +458,13 @@ async function submitOrder(req, res) {
         },
       });
     
+      io?.to("admins").emit("admin:userOrdersUpdated", {
+        userId: user._id.toString(),
+        ordersCompleted: Number(user.ordersCompleted || 0),
+        ordersLimit: Number(user.ordersLimit || vip.ordersLimit || 40),
+      });
     } catch (socketErr) {
-      console.error("submitOrder admin:userBalanceUpdated socket emit failed:", socketErr);
+      console.error("submitOrder socket emit failed:", socketErr.message);
     }
 
     return res.json({
