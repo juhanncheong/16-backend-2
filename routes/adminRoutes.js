@@ -24,6 +24,7 @@ const SigninRewardRule = require("../models/SigninRewardRule");
 const Content = require("../models/Content");
 const AdminPopup = require("../models/AdminPopup");
 const AdminPopupUserState = require("../models/AdminPopupUserState");
+const TargetedBonusOffer = require("../models/TargetedBonusOffer");
 
 const router = express.Router();
 
