@@ -105,6 +105,26 @@ router.post("/users", protect, adminOnly, async (req, res) => {
       .select("-password")
       .lean();
 
+    // ✅ Socket: notify admin panel new user created by admin
+    try {
+      const io = req.app.get("io");
+    
+      io?.to("admins").emit("admin:userCreated", {
+        user: {
+          ...safeUser,
+          balance: Number(safeUser.balance || 0),
+          displayBalance: Number(safeUser.balance || 0),
+          pendingAmount: 0,
+          currentPendingOrder: null,
+          referralCount: 0,
+          availableBalance: Number(safeUser.balance || 0),
+          referredBy: null,
+        },
+      });
+    } catch (socketErr) {
+      console.error("admin:userCreated socket emit failed:", socketErr.message);
+    }
+
     return res.status(201).json({
       ok: true,
       message: "✅ User created successfully",

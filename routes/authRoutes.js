@@ -127,6 +127,49 @@ router.post("/signup", async (req, res) => {
       referredByCode: referrer.referralCode,
     });
 
+    // ✅ Socket: notify admin panel new user registered
+    try {
+      const io = req.app.get("io");
+    
+      io?.to("admins").emit("admin:userCreated", {
+        user: {
+          _id: user._id,
+          id: user._id,
+          uid: user.uid,
+          phoneNumber: user.phoneNumber,
+          balance: user.balance || 0,
+          displayBalance: user.balance || 0,
+          pendingAmount: 0,
+          ordersCompleted: user.ordersCompleted || 0,
+          ordersLimit: user.ordersLimit || 40,
+          totalResetCount: user.totalResetCount || 1,
+          role: user.role || "user",
+          vipRank: user.vipRank || 1,
+          creditScore: user.creditScore ?? 100,
+          registeredIp: user.registeredIp || "",
+          registeredCountry: user.registeredCountry || "",
+          referralCode: user.referralCode || "",
+          referredBy: {
+            _id: referrer._id,
+            phoneNumber: referrer.phoneNumber,
+            referralCode: referrer.referralCode,
+          },
+          isBanned: Boolean(user.isBanned),
+          withdrawalBlocked: Boolean(user.withdrawalBlocked),
+          withdrawalBlockedReason: user.withdrawalBlockedReason || "",
+          withdrawalBlockedAt: user.withdrawalBlockedAt || null,
+          withdrawPinFailedAttempts: user.withdrawPinFailedAttempts || 0,
+          withdrawPinLocked: Boolean(user.withdrawPinLocked),
+          signinRewardEnabled: Boolean(user.signinRewardEnabled),
+          lastOnlineAt: user.lastOnlineAt || null,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
+      });
+    } catch (socketErr) {
+      console.error("admin:userCreated socket emit failed:", socketErr.message);
+    }
+
     // ✅ Duplicate register IP notification
     try {
       const normalizedIp = String(ip || "")
