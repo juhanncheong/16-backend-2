@@ -311,6 +311,25 @@ router.patch("/users/:id/balance", protect, adminOnly, async (req, res) => {
     await session.commitTransaction();
     session.endSession();
 
+    // ✅ Socket: notify admin panel balance changed
+    try {
+      const io = req.app.get("io");
+    
+      io?.to("admins").emit("admin:userBalanceUpdated", {
+        userId: user._id,
+        user: {
+          _id: user._id,
+          phoneNumber: user.phoneNumber,
+          balance: Number(user.balance || 0),
+          displayBalance: Number(user.balance || 0),
+          availableBalance: Number(user.balance || 0),
+          role: user.role,
+        },
+      });
+    } catch (socketErr) {
+      console.error("admin:userBalanceUpdated socket emit failed:", socketErr.message);
+    }
+
     return res.json({
       ok: true,
       message: "✅ Balance updated + transaction recorded",
