@@ -380,22 +380,47 @@ router.patch("/users/:id/role", protect, adminOnly, async (req, res) => {
 
 // ✅ Update user balance
 // mode: "set" -> balance = amount
-// mode: "inc" -> balance += amount (can use -50 to subtract)
+// mode: "inc" -> balance += amount
+// mode: "dec" -> balance -= amount
 router.patch("/users/:id/balance", protect, adminOnly, async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    const { mode, amount, note } = req.body;
-    const num = Number(amount);
+    const rawMode = String(req.body.mode || "").trim().toLowerCase();
+    const num = Number(req.body.amount);
+    const note = String(req.body.note || "").trim();
 
-    if (!Number.isFinite(num)) {
+    const modeMap = {
+      set: "set",
+
+      inc: "inc",
+      add: "inc",
+      deposit: "inc",
+      increase: "inc",
+
+      dec: "dec",
+      deduct: "dec",
+      subtract: "dec",
+      decrease: "dec",
+    };
+
+    const mode = modeMap[rawMode];
+
+    if (!["set", "inc", "dec"].includes(mode)) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ ok: false, message: "Invalid mode" });
+    }
+
+    if (!Number.isFinite(num) || num <= 0) {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ ok: false, message: "Invalid amount" });
     }
 
     const user = await User.findById(req.params.id).session(session);
+
     if (!user) {
       await session.abortTransaction();
       session.endSession();
@@ -405,36 +430,44 @@ router.patch("/users/:id/balance", protect, adminOnly, async (req, res) => {
     const before = Number(user.balance || 0);
     let after = before;
 
-    // ✅ Apply balance update
     if (mode === "set") {
       after = num;
-      user.balance = after;
-    } else if (mode === "inc") {
-      after = before + num;
-      user.balance = after;
-    } else {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ ok: false, message: "Invalid mode" });
     }
 
+    if (mode === "inc") {
+      after = before + num;
+    }
+
+    if (mode === "dec") {
+      after = before - num;
+    }
+
+    user.balance = after;
     await user.save({ session });
 
-    // ✅ Determine transaction type
-    // Only admin deposits should show in "Deposits page"
     let txType = "ADMIN_ADJUST";
-    if (mode === "inc" && num > 0) txType = "DEPOSIT";
 
-    // ✅ Save transaction record
+    if (mode === "inc") {
+      txType = "DEPOSIT";
+    }
+
+    const txAmount = mode === "dec" ? -num : mode === "set" ? after - before : num;
+
     await WalletTransaction.create(
       [
         {
           userId: user._id,
-          type: txType, // DEPOSIT or ADMIN_ADJUST
-          amount: num, // + or -
+          type: txType,
+          amount: txAmount,
           balanceBefore: before,
           balanceAfter: after,
-          note: String(note || ""),
+          note:
+            note ||
+            (mode === "dec"
+              ? "Admin deducted balance"
+              : mode === "set"
+              ? "Admin set balance"
+              : "Admin added balance"),
           relatedOrderId: null,
         },
       ],
@@ -444,10 +477,9 @@ router.patch("/users/:id/balance", protect, adminOnly, async (req, res) => {
     await session.commitTransaction();
     session.endSession();
 
-    // ✅ Socket: notify admin panel balance changed
     try {
       const io = req.app.get("io");
-    
+
       io?.to("admins").emit("admin:userBalanceUpdated", {
         userId: user._id,
         user: {
@@ -472,6 +504,8 @@ router.patch("/users/:id/balance", protect, adminOnly, async (req, res) => {
         _id: user._id,
         phoneNumber: user.phoneNumber,
         balance: user.balance,
+        displayBalance: Number(user.balance || 0),
+        availableBalance: Number(user.balance || 0),
         role: user.role,
       },
     });
