@@ -88,6 +88,81 @@ async function emitUserWalletUpdate(req, userId) {
   }
 }
 
+function emitAdminUserBalanceUpdated(req, user) {
+  try {
+    const io = req.app.get("io");
+    if (!io || !user) return;
+
+    io.to("admins").emit("admin:userBalanceUpdated", {
+      userId: user._id.toString(),
+      user: {
+        _id: user._id.toString(),
+        uid: user.uid || "",
+        phoneNumber: user.phoneNumber,
+        balance: Number(user.balance || 0),
+        displayBalance: Number(user.balance || 0),
+        availableBalance: Number(user.balance || 0),
+        role: user.role,
+      },
+    });
+  } catch (socketErr) {
+    console.error("admin:userBalanceUpdated socket emit failed:", socketErr.message);
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableMongoTransactionError(err) {
+  const labels = err?.errorLabels || [];
+
+  return (
+    labels.includes("TransientTransactionError") ||
+    labels.includes("UnknownTransactionCommitResult") ||
+    /Write conflict/i.test(err?.message || "") ||
+    /Please retry/i.test(err?.message || "")
+  );
+}
+
+async function runMongoTransactionWithRetry(work, maxAttempts = 3) {
+  let lastErr;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const session = await mongoose.startSession();
+
+    try {
+      let result;
+
+      await session.withTransaction(
+        async () => {
+          result = await work(session);
+        },
+        {
+          readConcern: { level: "snapshot" },
+          writeConcern: { w: "majority" },
+        }
+      );
+
+      session.endSession();
+      return result;
+    } catch (err) {
+      session.endSession();
+      lastErr = err;
+
+      if (!isRetryableMongoTransactionError(err) || attempt >= maxAttempts) {
+        throw err;
+      }
+
+      console.warn(`Mongo transaction retry ${attempt}/${maxAttempts}:`, err.message);
+
+      await sleep(80 * attempt);
+    }
+  }
+
+  throw lastErr;
+}
+
 function generateReferralCode(length = 8) {
   let code = "";
   for (let i = 0; i < length; i++) {
@@ -1497,73 +1572,72 @@ router.put("/content/:key", protect, adminOnly, async (req, res) => {
 });
 
 router.post("/users/:id/bonus", protect, adminOnly, async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
   try {
     const amount = Number(req.body.amount);
     const note = String(req.body.note || "Admin bonus").trim();
 
     if (!Number.isFinite(amount) || amount <= 0) {
-      await session.abortTransaction();
-      session.endSession();
       return res.status(400).json({
         ok: false,
         message: "amount must be a positive number",
       });
     }
 
-    const user = await User.findById(req.params.id).session(session);
-    if (!user) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({
-        ok: false,
-        message: "User not found",
-      });
-    }
+    const result = await runMongoTransactionWithRetry(async (session) => {
+      const user = await User.findById(req.params.id).session(session);
 
-    const before = Number(user.balance || 0);
-    const after = before + amount;
+      if (!user) {
+        const err = new Error("User not found");
+        err.statusCode = 404;
+        throw err;
+      }
 
-    user.balance = after;
-    await user.save({ session });
+      const before = Number(user.balance || 0);
+      const after = before + amount;
 
-    await WalletTransaction.create(
-      [
-        {
-          userId: user._id,
-          type: "BONUS",
-          amount,
-          balanceBefore: before,
-          balanceAfter: after,
-          note,
-          relatedOrderId: null,
+      user.balance = after;
+      await user.save({ session });
+
+      await WalletTransaction.create(
+        [
+          {
+            userId: user._id,
+            type: "BONUS",
+            amount,
+            balanceBefore: before,
+            balanceAfter: after,
+            note,
+            relatedOrderId: null,
+          },
+        ],
+        { session }
+      );
+
+      return {
+        userId: user._id,
+        user: {
+          _id: user._id,
+          uid: user.uid,
+          phoneNumber: user.phoneNumber,
+          balance: user.balance,
+          role: user.role,
         },
-      ],
-      { session }
-    );
+      };
+    });
 
-    await session.commitTransaction();
-    session.endSession();
-
-    await emitUserWalletUpdate(req, user._id);
+    emitAdminUserBalanceUpdated(req, result.user);
+    await emitUserWalletUpdate(req, result.userId);
 
     return res.json({
       ok: true,
       message: "✅ Bonus added successfully",
       transactionType: "BONUS",
-      user: {
-        _id: user._id,
-        phoneNumber: user.phoneNumber,
-        balance: user.balance,
-      },
+      user: result.user,
     });
   } catch (err) {
-    await session.abortTransaction();
-    session.endSession();
     console.error("admin bonus error:", err);
-    return res.status(500).json({
+
+    return res.status(err.statusCode || 500).json({
       ok: false,
       message: err.message || "Server error",
     });
@@ -1698,74 +1772,72 @@ router.get("/bonus-history", protect, adminOnly, async (req, res) => {
 });
 
 router.post("/users/:id/borrow", protect, adminOnly, async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
   try {
     const amount = Number(req.body.amount);
     const note = String(req.body.note || "Admin borrow credit").trim();
 
     if (!Number.isFinite(amount) || amount <= 0) {
-      await session.abortTransaction();
-      session.endSession();
       return res.status(400).json({
         ok: false,
         message: "amount must be a positive number",
       });
     }
 
-    const user = await User.findById(req.params.id).session(session);
-    if (!user) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({
-        ok: false,
-        message: "User not found",
-      });
-    }
+    const result = await runMongoTransactionWithRetry(async (session) => {
+      const user = await User.findById(req.params.id).session(session);
 
-    const before = Number(user.balance || 0);
-    const after = before + amount;
+      if (!user) {
+        const err = new Error("User not found");
+        err.statusCode = 404;
+        throw err;
+      }
 
-    user.balance = after;
-    await user.save({ session });
+      const before = Number(user.balance || 0);
+      const after = before + amount;
 
-    await WalletTransaction.create(
-      [
-        {
-          userId: user._id,
-          type: "BORROW",
-          amount,
-          balanceBefore: before,
-          balanceAfter: after,
-          note,
-          relatedOrderId: null,
+      user.balance = after;
+      await user.save({ session });
+
+      await WalletTransaction.create(
+        [
+          {
+            userId: user._id,
+            type: "BORROW",
+            amount,
+            balanceBefore: before,
+            balanceAfter: after,
+            note,
+            relatedOrderId: null,
+          },
+        ],
+        { session }
+      );
+
+      return {
+        userId: user._id,
+        user: {
+          _id: user._id,
+          uid: user.uid,
+          phoneNumber: user.phoneNumber,
+          balance: user.balance,
+          role: user.role,
         },
-      ],
-      { session }
-    );
+      };
+    });
 
-    await session.commitTransaction();
-    session.endSession();
-
-    await emitUserWalletUpdate(req, user._id);
+    emitAdminUserBalanceUpdated(req, result.user);
+    await emitUserWalletUpdate(req, result.userId);
 
     return res.json({
       ok: true,
       message: "✅ Borrow credit added successfully",
       transactionType: "BORROW",
-      user: {
-        _id: user._id,
-        uid: user.uid,
-        phoneNumber: user.phoneNumber,
-        balance: user.balance,
-      },
+      user: result.user,
     });
   } catch (err) {
-    await session.abortTransaction();
-    session.endSession();
     console.error("admin borrow error:", err);
-    return res.status(500).json({
+
+    return res.status(err.statusCode || 500).json({
       ok: false,
       message: err.message || "Server error",
     });
