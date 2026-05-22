@@ -68,7 +68,6 @@ async function startServer() {
       origin: "*",
       methods: ["GET", "POST"],
     },
-    transports: ["websocket"],
   });
 
   app.set("io", io);
