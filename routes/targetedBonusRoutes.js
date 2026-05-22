@@ -91,7 +91,14 @@ router.post("/:offerId/reserve", protect, async (req, res) => {
         Number(option.bonusAmount) === selectedBonusAmount
       );
     });
-    
+ 
+    if (!matchedOption) {
+      return res.status(400).json({
+        ok: false,
+        message: "Selected bonus option does not exist",
+      });
+    }
+        
     if (matchedOption?.isFull) {
       return res.status(400).json({
         ok: false,
