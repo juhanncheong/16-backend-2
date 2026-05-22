@@ -7,6 +7,7 @@ const cloudinary = require("../config/cloudinary");
 const ChatMessage = require("../models/ChatMessage");
 const AdminNote = require("../models/AdminNote");
 const User = require("../models/User");
+const AdminChatHotkey = require("../models/AdminChatHotkey");
 
 const storage = new CloudinaryStorage({
   cloudinary,
@@ -466,6 +467,228 @@ router.delete("/messages/:messageId/image", async (req, res) => {
   } catch (err) {
     console.error("delete image error:", err);
     res.status(500).json({ message: "Failed to delete image" });
+  }
+});
+
+// ✅ Admin: get all chat hotkeys
+router.get("/admin-hotkeys", async (req, res) => {
+  try {
+    const adminId = "global";
+
+    const hotkeys = await AdminChatHotkey.find({ adminId })
+      .sort({ sortOrder: 1, createdAt: 1 })
+      .lean();
+
+    return res.json({
+      ok: true,
+      hotkeys: hotkeys.map((h) => ({
+        id: String(h._id),
+        label: h.label || "",
+        text: h.text || "",
+        enabled: h.enabled !== false,
+        sortOrder: Number(h.sortOrder || 0),
+        createdAt: h.createdAt,
+        updatedAt: h.updatedAt,
+      })),
+    });
+  } catch (err) {
+    console.error("get admin hotkeys error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to fetch hotkeys",
+    });
+  }
+});
+
+// ✅ Admin: add new chat hotkey
+router.post("/admin-hotkeys", async (req, res) => {
+  try {
+    const adminId = "global";
+
+    const label = String(req.body?.label || "").trim();
+    const text = String(req.body?.text || "").trim();
+    const enabled = req.body?.enabled !== false;
+
+    if (!label) {
+      return res.status(400).json({
+        ok: false,
+        message: "Label is required",
+      });
+    }
+
+    if (!text) {
+      return res.status(400).json({
+        ok: false,
+        message: "Text is required",
+      });
+    }
+
+    if (label.length > 40) {
+      return res.status(400).json({
+        ok: false,
+        message: "Label is too long",
+      });
+    }
+
+    if (text.length > 2000) {
+      return res.status(400).json({
+        ok: false,
+        message: "Text is too long",
+      });
+    }
+
+    const count = await AdminChatHotkey.countDocuments({ adminId });
+
+    const hotkey = await AdminChatHotkey.create({
+      adminId,
+      label,
+      text,
+      enabled,
+      sortOrder: count + 1,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      message: "Hotkey added",
+      hotkey: {
+        id: String(hotkey._id),
+        label: hotkey.label,
+        text: hotkey.text,
+        enabled: hotkey.enabled,
+        sortOrder: hotkey.sortOrder,
+        createdAt: hotkey.createdAt,
+        updatedAt: hotkey.updatedAt,
+      },
+    });
+  } catch (err) {
+    console.error("add admin hotkey error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to add hotkey",
+    });
+  }
+});
+
+// ✅ Admin: update one hotkey
+router.patch("/admin-hotkeys/:id", async (req, res) => {
+  try {
+    const adminId = "global";
+    const id = String(req.params.id || "").trim();
+
+    const update = {};
+
+    if (typeof req.body?.label !== "undefined") {
+      const label = String(req.body.label || "").trim();
+
+      if (!label) {
+        return res.status(400).json({
+          ok: false,
+          message: "Label is required",
+        });
+      }
+
+      if (label.length > 40) {
+        return res.status(400).json({
+          ok: false,
+          message: "Label is too long",
+        });
+      }
+
+      update.label = label;
+    }
+
+    if (typeof req.body?.text !== "undefined") {
+      const text = String(req.body.text || "").trim();
+
+      if (!text) {
+        return res.status(400).json({
+          ok: false,
+          message: "Text is required",
+        });
+      }
+
+      if (text.length > 2000) {
+        return res.status(400).json({
+          ok: false,
+          message: "Text is too long",
+        });
+      }
+
+      update.text = text;
+    }
+
+    if (typeof req.body?.enabled !== "undefined") {
+      update.enabled = Boolean(req.body.enabled);
+    }
+
+    if (typeof req.body?.sortOrder !== "undefined") {
+      update.sortOrder = Number(req.body.sortOrder || 0);
+    }
+
+    const hotkey = await AdminChatHotkey.findOneAndUpdate(
+      { _id: id, adminId },
+      update,
+      { new: true, runValidators: true }
+    ).lean();
+
+    if (!hotkey) {
+      return res.status(404).json({
+        ok: false,
+        message: "Hotkey not found",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      message: "Hotkey updated",
+      hotkey: {
+        id: String(hotkey._id),
+        label: hotkey.label,
+        text: hotkey.text,
+        enabled: hotkey.enabled !== false,
+        sortOrder: Number(hotkey.sortOrder || 0),
+        createdAt: hotkey.createdAt,
+        updatedAt: hotkey.updatedAt,
+      },
+    });
+  } catch (err) {
+    console.error("update admin hotkey error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to update hotkey",
+    });
+  }
+});
+
+// ✅ Admin: delete one hotkey
+router.delete("/admin-hotkeys/:id", async (req, res) => {
+  try {
+    const adminId = "global";
+    const id = String(req.params.id || "").trim();
+
+    const deleted = await AdminChatHotkey.findOneAndDelete({
+      _id: id,
+      adminId,
+    }).lean();
+
+    if (!deleted) {
+      return res.status(404).json({
+        ok: false,
+        message: "Hotkey not found",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      message: "Hotkey deleted",
+      id,
+    });
+  } catch (err) {
+    console.error("delete admin hotkey error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to delete hotkey",
+    });
   }
 });
 
