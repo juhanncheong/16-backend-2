@@ -33,7 +33,7 @@ function sanitizePin(pin) {
 }
 
 function isValidPinFormat(pin) {
-  return /^\d{4,12}$/.test(pin);
+  return /^[\x21-\x7E]{4,12}$/.test(pin);
 }
 
 function normalizeMethod(method) {
@@ -385,7 +385,7 @@ exports.createWithdrawal = async (req, res) => {
       return res.status(400).json({
         ok: false,
         code: "INVALID_WITHDRAW_PIN",
-        message: "Withdrawal PIN must be 4 to 12 digits",
+        message: "PIN must be 4 to 12 digits",
       });
     }
 
