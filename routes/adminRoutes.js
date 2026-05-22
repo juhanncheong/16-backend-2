@@ -2388,4 +2388,30 @@ router.get("/targeted-bonus-offers/:id", protect, adminOnly, async (req, res) =>
   }
 });
 
+// ✅ Admin delete targeted bonus offer
+router.delete("/targeted-bonus-offers/:id", protect, adminOnly, async (req, res) => {
+  try {
+    const offer = await TargetedBonusOffer.findByIdAndDelete(req.params.id);
+
+    if (!offer) {
+      return res.status(404).json({
+        ok: false,
+        message: "Targeted bonus offer not found",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      message: "✅ Targeted bonus offer deleted",
+      deletedId: req.params.id,
+    });
+  } catch (err) {
+    console.error("delete targeted bonus offer error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
 module.exports = router;
