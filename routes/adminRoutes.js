@@ -30,6 +30,64 @@ const router = express.Router();
 
 const REFERRAL_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
+async function getTrialBonusRemainingForUser(userId) {
+  const rows = await WalletTransaction.aggregate([
+    {
+      $match: {
+        userId: new mongoose.Types.ObjectId(userId),
+        type: { $in: ["TRIAL_CREDIT", "TRIAL_REVERSAL"] },
+      },
+    },
+    {
+      $group: {
+        _id: "$type",
+        total: { $sum: "$amount" },
+      },
+    },
+  ]);
+
+  let credited = 0;
+  let reversed = 0;
+
+  for (const row of rows) {
+    if (row._id === "TRIAL_CREDIT") {
+      credited = Number(row.total || 0);
+    }
+
+    if (row._id === "TRIAL_REVERSAL") {
+      reversed = Math.abs(Number(row.total || 0));
+    }
+  }
+
+  return Math.max(0, credited - reversed);
+}
+
+async function emitUserWalletUpdate(req, userId) {
+  try {
+    const io = req.app.get("io");
+    if (!io || !userId) return;
+
+    const user = await User.findById(userId)
+      .select("_id phoneNumber balance role")
+      .lean();
+
+    if (!user) return;
+
+    const trialBonusRemaining = await getTrialBonusRemainingForUser(user._id);
+
+    io.to(`user:${user._id.toString()}`).emit("user:wallet:update", {
+      userId: user._id.toString(),
+      phoneNumber: user.phoneNumber,
+      balance: Number(user.balance || 0),
+      availableBalance: Number(user.balance || 0),
+      trialBonusRemaining: Number(trialBonusRemaining || 0),
+      role: user.role,
+    });
+  } catch (socketErr) {
+    console.error("user:wallet:update socket emit failed:", socketErr.message);
+  }
+}
+
 function generateReferralCode(length = 8) {
   let code = "";
   for (let i = 0; i < length; i++) {
@@ -330,6 +388,8 @@ router.patch("/users/:id/balance", protect, adminOnly, async (req, res) => {
       console.error("admin:userBalanceUpdated socket emit failed:", socketErr.message);
     }
 
+    await emitUserWalletUpdate(req, user._id);
+
     return res.json({
       ok: true,
       message: "✅ Balance updated + transaction recorded",
@@ -387,9 +447,11 @@ router.post("/users/:id/trial-credit", protect, adminOnly, async (req, res) => {
       type: "TRIAL_CREDIT",
       amount,
       balanceBefore: user.balance,
-      balanceAfter: user.balance, // 
+      balanceAfter: user.balance,
       note,
     });
+
+    await emitUserWalletUpdate(req, user._id);
 
     return res.json({
       ok: true,
@@ -458,6 +520,8 @@ router.post("/users/:id/trial-revoke", protect, adminOnly, async (req, res) => {
       balanceAfter: user.balance,
       note,
     });
+
+    await emitUserWalletUpdate(req, user._id);
 
     return res.json({
       ok: true,
@@ -1483,6 +1547,8 @@ router.post("/users/:id/bonus", protect, adminOnly, async (req, res) => {
     await session.commitTransaction();
     session.endSession();
 
+    await emitUserWalletUpdate(req, user._id);
+
     return res.json({
       ok: true,
       message: "✅ Bonus added successfully",
@@ -1681,6 +1747,8 @@ router.post("/users/:id/borrow", protect, adminOnly, async (req, res) => {
 
     await session.commitTransaction();
     session.endSession();
+
+    await emitUserWalletUpdate(req, user._id);
 
     return res.json({
       ok: true,
