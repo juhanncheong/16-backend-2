@@ -1370,15 +1370,26 @@ router.put("/signin/rewards-config", protect, adminOnly, async (req, res) => {
 
 router.get("/vip/config", protect, adminOnly, async (req, res) => {
   try {
-    let config = await VipConfig.findOne().lean();
+    let config = await VipConfig.findOne();
 
-    // auto create if missing
-    if (!config) config = await VipConfig.create({});
+    if (!config) {
+      config = await VipConfig.create({});
+    }
 
-    return res.json({ ok: true, config });
+    config = normalizeVipConfig(config);
+
+    await config.save();
+
+    return res.json({
+      ok: true,
+      config,
+    });
   } catch (err) {
     console.error("Get VIP config error:", err);
-    return res.status(500).json({ ok: false, message: "Server error" });
+    return res.status(500).json({
+      ok: false,
+      message: "Server error",
+    });
   }
 });
 
@@ -1387,7 +1398,11 @@ router.put("/vip/config", protect, adminOnly, async (req, res) => {
     const { ranks, bonusCommissionRate } = req.body;
 
     const cleanBonusCommissionRate = Number(bonusCommissionRate);
-    if (!Number.isFinite(cleanBonusCommissionRate) || cleanBonusCommissionRate < 0) {
+
+    if (
+      !Number.isFinite(cleanBonusCommissionRate) ||
+      cleanBonusCommissionRate < 0
+    ) {
       return res.status(400).json({
         ok: false,
         message: "Invalid bonusCommissionRate",
@@ -1401,20 +1416,40 @@ router.put("/vip/config", protect, adminOnly, async (req, res) => {
       });
     }
 
-    // validate each rank
-    const cleaned = ranks.map((r) => {
-      const rank = Number(r.rank);
-      const ordersLimit = Number(r.ordersLimit);
-      const commissionRate = Number(r.commissionRate);
+    const cleaned = ranks
+      .map((r) => {
+        const rank = Number(r.rank);
+        const ordersLimit = Number(r.ordersLimit);
+        const commissionRate = Number(r.commissionRate);
+        const depositRequirement = Number(r.depositRequirement);
 
-      if (![1, 2, 3].includes(rank)) throw new Error("Invalid rank");
-      if (!Number.isFinite(ordersLimit) || ordersLimit < 1) throw new Error("Invalid ordersLimit");
-      if (!Number.isFinite(commissionRate) || commissionRate < 0) throw new Error("Invalid commissionRate");
+        if (![1, 2, 3].includes(rank)) {
+          throw new Error("Invalid rank");
+        }
 
-      return { rank, ordersLimit, commissionRate };
-    });
+        if (!Number.isFinite(ordersLimit) || ordersLimit < 1) {
+          throw new Error("Invalid ordersLimit");
+        }
+
+        if (!Number.isFinite(commissionRate) || commissionRate < 0) {
+          throw new Error("Invalid commissionRate");
+        }
+
+        if (!Number.isFinite(depositRequirement) || depositRequirement < 0) {
+          throw new Error("Invalid depositRequirement");
+        }
+
+        return {
+          rank,
+          ordersLimit,
+          commissionRate,
+          depositRequirement,
+        };
+      })
+      .sort((a, b) => a.rank - b.rank);
 
     let config = await VipConfig.findOne();
+
     if (!config) {
       config = await VipConfig.create({
         bonusCommissionRate: cleanBonusCommissionRate,
@@ -1426,12 +1461,44 @@ router.put("/vip/config", protect, adminOnly, async (req, res) => {
       await config.save();
     }
 
-    return res.json({ ok: true, message: "✅ VIP config updated", config });
+    return res.json({
+      ok: true,
+      message: "✅ VIP config updated",
+      config,
+    });
   } catch (err) {
     console.error("Update VIP config error:", err);
-    return res.status(500).json({ ok: false, message: err.message });
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
   }
 });
+
+function normalizeVipConfig(config) {
+  const defaultRanks = [
+    { rank: 1, ordersLimit: 40, commissionRate: 0.01, depositRequirement: 50 },
+    { rank: 2, ordersLimit: 60, commissionRate: 0.015, depositRequirement: 500 },
+    { rank: 3, ordersLimit: 80, commissionRate: 0.02, depositRequirement: 5000 },
+  ];
+
+  const existingRanks = Array.isArray(config.ranks) ? config.ranks : [];
+
+  config.ranks = defaultRanks.map((def) => {
+    const found = existingRanks.find((r) => Number(r.rank) === def.rank);
+
+    return {
+      rank: def.rank,
+      ordersLimit: Number(found?.ordersLimit ?? def.ordersLimit),
+      commissionRate: Number(found?.commissionRate ?? def.commissionRate),
+      depositRequirement: Number(
+        found?.depositRequirement ?? def.depositRequirement
+      ),
+    };
+  });
+
+  return config;
+}
 
 router.patch("/users/:id/vip-rank", protect, adminOnly, async (req, res) => {
   try {
