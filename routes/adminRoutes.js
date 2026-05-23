@@ -2455,6 +2455,51 @@ router.get("/targeted-bonus-offers/:id", protect, adminOnly, async (req, res) =>
   }
 });
 
+// ✅ Admin reset user's selected targeted bonus choice
+router.patch(
+  "/targeted-bonus-offers/:id/reset-selection",
+  protect,
+  adminOnly,
+  async (req, res) => {
+    try {
+      const offer = await TargetedBonusOffer.findById(req.params.id);
+
+      if (!offer) {
+        return res.status(404).json({
+          ok: false,
+          message: "Targeted bonus offer not found",
+        });
+      }
+
+      if (!offer.isReserved && offer.status !== "reserved" && !offer.selectedOption) {
+        return res.status(400).json({
+          ok: false,
+          message: "This offer has no selected choice to reset",
+        });
+      }
+
+      offer.selectedOption = undefined;
+      offer.isReserved = false;
+      offer.reservedAt = null;
+      offer.status = "active";
+
+      await offer.save();
+
+      return res.json({
+        ok: true,
+        message: "✅ User selected choice removed. User can select again.",
+        offer,
+      });
+    } catch (err) {
+      console.error("reset targeted bonus selection error:", err);
+      return res.status(500).json({
+        ok: false,
+        message: err.message || "Server error",
+      });
+    }
+  }
+);
+
 // ✅ Admin delete targeted bonus offer
 router.delete("/targeted-bonus-offers/:id", protect, adminOnly, async (req, res) => {
   try {
