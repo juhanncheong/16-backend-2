@@ -319,7 +319,7 @@ exports.createWithdrawal = async (req, res) => {
     const selectedMethod = normalizeMethod(paymentMethod || cryptoType);
 
     const user = await User.findById(userId).select(
-      "+withdrawPinHash withdrawPinFailedAttempts withdrawPinLocked withdrawPinLockedAt balance ordersCompleted ordersLimit withdrawalBlocked withdrawalBlockedReason withdrawalBlockedAt creditScore"
+      "+withdrawPinHash withdrawPinFailedAttempts withdrawPinLocked withdrawPinLockedAt balance ordersCompleted ordersLimit withdrawalBlocked withdrawalBlockedReason withdrawalBlockedAt creditScore uid phoneNumber role"
     );
 
     if (!user) {
@@ -710,6 +710,7 @@ exports.createWithdrawal = async (req, res) => {
         userId: user._id.toString(),
         user: {
           _id: user._id.toString(),
+          uid: user.uid,
           phoneNumber: user.phoneNumber,
           balance: balanceAfter,
           displayBalance: balanceAfter,
@@ -739,6 +740,7 @@ exports.createWithdrawal = async (req, res) => {
         },
         user: {
           _id: user._id.toString(),
+          uid: user.uid,
           phoneNumber: user.phoneNumber,
           balance: balanceAfter,
         },
