@@ -699,6 +699,54 @@ exports.createWithdrawal = async (req, res) => {
       return withdrawal[0];
     });
 
+    // ✅ Socket: make admin withdrawal page + admin user page live
+    try {
+      const io = req.app.get("io");
+    
+      const balanceAfter = Number(result.balanceAfter || 0);
+    
+      // ✅ Admin Users page balance live update
+      io?.to("admins").emit("admin:userBalanceUpdated", {
+        userId: user._id.toString(),
+        user: {
+          _id: user._id.toString(),
+          phoneNumber: user.phoneNumber,
+          balance: balanceAfter,
+          displayBalance: balanceAfter,
+          availableBalance: balanceAfter,
+          shortBalance: balanceAfter,
+          pendingAmount: 0,
+          role: user.role,
+        },
+      });
+    
+      // ✅ Admin Withdrawal page live new row
+      io?.to("admins").emit("admin:withdrawalCreated", {
+        withdrawal: {
+          _id: result._id.toString(),
+          user: user._id.toString(),
+          amount: Number(result.amount || 0),
+          paymentMethod: result.paymentMethod,
+          cryptoType: result.cryptoType,
+          address: result.address || "",
+          bankDetails: result.bankDetails || null,
+          status: result.status,
+          progressPercent: Number(result.progressPercent || 0),
+          balanceBefore: Number(result.balanceBefore || 0),
+          balanceAfter,
+          createdAt: result.createdAt,
+          updatedAt: result.updatedAt,
+        },
+        user: {
+          _id: user._id.toString(),
+          phoneNumber: user.phoneNumber,
+          balance: balanceAfter,
+        },
+      });
+    } catch (socketErr) {
+      console.error("createWithdrawal socket emit failed:", socketErr.message);
+    }
+
     return res.json({
       ok: true,
       message: "Withdrawal submitted successfully",
