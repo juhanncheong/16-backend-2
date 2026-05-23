@@ -8,6 +8,8 @@ const ChatMessage = require("../models/ChatMessage");
 const AdminNote = require("../models/AdminNote");
 const User = require("../models/User");
 const AdminChatHotkey = require("../models/AdminChatHotkey");
+const ChatTab = require("../models/ChatTab");
+const ChatConversationMeta = require("../models/ChatConversationMeta");
 
 const storage = new CloudinaryStorage({
   cloudinary,
@@ -26,6 +28,281 @@ const upload = multer({
     }
     cb(null, true);
   },
+});
+
+// ✅ Admin: get all chat tabs
+router.get("/admin-tabs", async (req, res) => {
+  try {
+    const adminId = "global";
+
+    const tabs = await ChatTab.find({ adminId })
+      .sort({ sortOrder: 1, createdAt: 1 })
+      .lean();
+
+    return res.json({
+      ok: true,
+      tabs: tabs.map((tab) => ({
+        id: String(tab._id),
+        name: tab.name || "",
+        color: tab.color || "",
+        sortOrder: Number(tab.sortOrder || 0),
+        createdAt: tab.createdAt,
+        updatedAt: tab.updatedAt,
+      })),
+    });
+  } catch (err) {
+    console.error("get admin chat tabs error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to fetch chat tabs",
+    });
+  }
+});
+
+// ✅ Admin: create chat tab
+router.post("/admin-tabs", async (req, res) => {
+  try {
+    const adminId = "global";
+
+    const name = String(req.body?.name || "").trim();
+    const color = String(req.body?.color || "").trim();
+
+    if (!name) {
+      return res.status(400).json({
+        ok: false,
+        message: "Tab name is required",
+      });
+    }
+
+    if (name.length > 40) {
+      return res.status(400).json({
+        ok: false,
+        message: "Tab name is too long",
+      });
+    }
+
+    const existing = await ChatTab.findOne({
+      adminId,
+      name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i"),
+    }).lean();
+
+    if (existing) {
+      return res.status(409).json({
+        ok: false,
+        message: "Tab name already exists",
+      });
+    }
+
+    const count = await ChatTab.countDocuments({ adminId });
+
+    const tab = await ChatTab.create({
+      adminId,
+      name,
+      color,
+      sortOrder: count + 1,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      message: "Chat tab created",
+      tab: {
+        id: String(tab._id),
+        name: tab.name || "",
+        color: tab.color || "",
+        sortOrder: Number(tab.sortOrder || 0),
+        createdAt: tab.createdAt,
+        updatedAt: tab.updatedAt,
+      },
+    });
+  } catch (err) {
+    console.error("create admin chat tab error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to create chat tab",
+    });
+  }
+});
+
+// ✅ Admin: update chat tab
+router.patch("/admin-tabs/:tabId", async (req, res) => {
+  try {
+    const adminId = "global";
+    const tabId = String(req.params.tabId || "").trim();
+
+    const update = {};
+
+    if (typeof req.body?.name !== "undefined") {
+      const name = String(req.body.name || "").trim();
+
+      if (!name) {
+        return res.status(400).json({
+          ok: false,
+          message: "Tab name is required",
+        });
+      }
+
+      if (name.length > 40) {
+        return res.status(400).json({
+          ok: false,
+          message: "Tab name is too long",
+        });
+      }
+
+      const duplicate = await ChatTab.findOne({
+        _id: { $ne: tabId },
+        adminId,
+        name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i"),
+      }).lean();
+
+      if (duplicate) {
+        return res.status(409).json({
+          ok: false,
+          message: "Tab name already exists",
+        });
+      }
+
+      update.name = name;
+    }
+
+    if (typeof req.body?.color !== "undefined") {
+      update.color = String(req.body.color || "").trim();
+    }
+
+    if (typeof req.body?.sortOrder !== "undefined") {
+      update.sortOrder = Number(req.body.sortOrder || 0);
+    }
+
+    const tab = await ChatTab.findOneAndUpdate(
+      { _id: tabId, adminId },
+      update,
+      { new: true, runValidators: true }
+    ).lean();
+
+    if (!tab) {
+      return res.status(404).json({
+        ok: false,
+        message: "Chat tab not found",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      message: "Chat tab updated",
+      tab: {
+        id: String(tab._id),
+        name: tab.name || "",
+        color: tab.color || "",
+        sortOrder: Number(tab.sortOrder || 0),
+        createdAt: tab.createdAt,
+        updatedAt: tab.updatedAt,
+      },
+    });
+  } catch (err) {
+    console.error("update admin chat tab error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to update chat tab",
+    });
+  }
+});
+
+// ✅ Admin: delete chat tab
+router.delete("/admin-tabs/:tabId", async (req, res) => {
+  try {
+    const adminId = "global";
+    const tabId = String(req.params.tabId || "").trim();
+
+    const deleted = await ChatTab.findOneAndDelete({
+      _id: tabId,
+      adminId,
+    }).lean();
+
+    if (!deleted) {
+      return res.status(404).json({
+        ok: false,
+        message: "Chat tab not found",
+      });
+    }
+
+    // Important: when a tab is deleted, chats inside it go back to All
+    await ChatConversationMeta.updateMany(
+      { chatTabId: tabId },
+      { $set: { chatTabId: null } }
+    );
+
+    return res.json({
+      ok: true,
+      message: "Chat tab deleted",
+      id: tabId,
+    });
+  } catch (err) {
+    console.error("delete admin chat tab error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to delete chat tab",
+    });
+  }
+});
+
+// ✅ Admin: move one conversation to one tab
+router.patch("/conversations/:userId/tab", async (req, res) => {
+  try {
+    const userId = String(req.params.userId || "").trim();
+    const rawTabId = req.body?.chatTabId;
+
+    if (!userId) {
+      return res.status(400).json({
+        ok: false,
+        message: "userId is required",
+      });
+    }
+
+    let chatTabId = null;
+
+    if (rawTabId) {
+      const tab = await ChatTab.findOne({
+        _id: rawTabId,
+        adminId: "global",
+      }).lean();
+
+      if (!tab) {
+        return res.status(404).json({
+          ok: false,
+          message: "Chat tab not found",
+        });
+      }
+
+      chatTabId = tab._id;
+    }
+
+    const meta = await ChatConversationMeta.findOneAndUpdate(
+      { userId },
+      {
+        userId,
+        chatTabId,
+      },
+      {
+        upsert: true,
+        new: true,
+        runValidators: true,
+      }
+    ).lean();
+
+    return res.json({
+      ok: true,
+      message: chatTabId ? "Conversation moved to tab" : "Conversation removed from tab",
+      conversation: {
+        userId,
+        chatTabId: meta.chatTabId ? String(meta.chatTabId) : null,
+      },
+    });
+  } catch (err) {
+    console.error("move conversation tab error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to update conversation tab",
+    });
+  }
 });
 
 /**
@@ -68,22 +345,42 @@ router.get("/conversations", async (req, res) => {
       { $sort: { lastTime: -1 } },
     ]);
 
-    const conversations = rows.map((row) => ({
-      userId: row._id,
-      uid: row.uid || "",
-      phoneNumber: row.phoneNumber || "",
-      lastMessage:
-        row.lastType === "image"
-          ? row.lastMessage || "Image"
-          : row.lastMessage || "",
-      lastTime: row.lastTime,
-      type: row.lastType || "text",
-      imageUrl: row.imageUrl || "",
-      fileName: row.fileName || "",
-      sender: row.sender || "",
-      status: row.status || "sent",
-      unreadCount: Number(row.unreadCount || 0),
-    }));
+    const userIds = rows.map((row) => String(row._id)).filter(Boolean);
+
+    const metas = await ChatConversationMeta.find({
+      userId: { $in: userIds },
+    })
+      .select("userId chatTabId")
+      .lean();
+    
+    const metaMap = new Map(
+      metas.map((m) => [
+        String(m.userId),
+        m.chatTabId ? String(m.chatTabId) : null,
+      ])
+    );
+
+    const conversations = rows.map((row) => {
+      const userId = String(row._id || "");
+    
+      return {
+        userId,
+        uid: row.uid || "",
+        phoneNumber: row.phoneNumber || "",
+        lastMessage:
+          row.lastType === "image"
+            ? row.lastMessage || "Image"
+            : row.lastMessage || "",
+        lastTime: row.lastTime,
+        type: row.lastType || "text",
+        imageUrl: row.imageUrl || "",
+        fileName: row.fileName || "",
+        sender: row.sender || "",
+        status: row.status || "sent",
+        unreadCount: Number(row.unreadCount || 0),
+        chatTabId: metaMap.has(userId) ? metaMap.get(userId) : null,
+      };
+    });
 
     res.json({ conversations });
   } catch (err) {
