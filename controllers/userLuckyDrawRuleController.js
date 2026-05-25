@@ -5,6 +5,7 @@ const OrderPool = require("../models/OrderPool");
 const LuckyDrawRule = require("../models/LuckyDrawRule");
 const VipConfig = require("../models/VipConfig");
 const WalletTransaction = require("../models/WalletTransaction");
+const OrderImageMap = require("../models/OrderImageMap");
   
 function calcCommission(price, rate) {
   return Math.round(Number(price || 0) * Number(rate || 0) * 100) / 100;
@@ -31,6 +32,36 @@ async function getVipSettings(user) {
     ...vip,
     bonusCommissionRate: Number(config.bonusCommissionRate ?? 0.1),
   };
+}
+
+let IMAGE_MAP_CACHE = new Map();
+let IMAGE_MAP_CACHE_AT = 0;
+
+async function refreshImageMapCache(force = false) {
+  const now = Date.now();
+
+  if (!force && now - IMAGE_MAP_CACHE_AT < 60000) return;
+
+  const maps = await OrderImageMap.find({ isActive: true })
+    .select("key imageUrl")
+    .lean();
+
+  IMAGE_MAP_CACHE = new Map(
+    maps.map((m) => [String(m.key || "").trim().toLowerCase(), m.imageUrl])
+  );
+
+  IMAGE_MAP_CACHE_AT = now;
+}
+
+async function resolveOrderImage(order) {
+  if (!order) return "";
+
+  const key = String(order.imageKey || "").trim().toLowerCase();
+  if (!key) return order.imageUrl || "";
+
+  await refreshImageMapCache();
+
+  return IMAGE_MAP_CACHE.get(key) || order.imageUrl || "";
 }
 
 // ✅ get active lucky draw for the user's next order count
@@ -190,6 +221,8 @@ async function claimLuckyDraw(req, res) {
 
         const commission = calcCommission(poolOrder.price, rateToUse);
 
+        const resolvedImageUrl = await resolveOrderImage(poolOrder);
+
         const created = await UserOrder.create(
           [
             {
@@ -199,7 +232,7 @@ async function claimLuckyDraw(req, res) {
               orderNumber: poolOrder.orderNumber,
               orderName: poolOrder.orderName,
               price: poolOrder.price,
-              imageUrl: poolOrder.imageUrl || "",
+              imageUrl: resolvedImageUrl,
               imageKey: poolOrder.imageKey || "",
               commission,
               isBonus: true,
