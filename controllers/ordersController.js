@@ -561,12 +561,7 @@ async function orderHistory(req, res) {
         order.orderSource ||
         (order.isBonus ? "bonus_rule" : "normal");
       
-      const historyName =
-        orderSource === "lucky_draw"
-          ? "Lucky Draw Bonus Order"
-          : orderSource === "bonus_rule"
-            ? "Bonus Order"
-            : order.orderName;
+      const historyName = order.orderName || "Order";
       
       return {
         _id: order._id,

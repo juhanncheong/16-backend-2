@@ -199,6 +199,8 @@ async function claimLuckyDraw(req, res) {
               orderNumber: poolOrder.orderNumber,
               orderName: poolOrder.orderName,
               price: poolOrder.price,
+              imageUrl: poolOrder.imageUrl || "",
+              imageKey: poolOrder.imageKey || "",
               commission,
               isBonus: true,
               orderSource: "lucky_draw",
