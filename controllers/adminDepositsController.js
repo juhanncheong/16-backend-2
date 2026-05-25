@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const WalletTransaction = require("../models/WalletTransaction");
+const User = require("../models/User");
 
 function isValidObjectId(v) {
   return mongoose.Types.ObjectId.isValid(v);
@@ -22,26 +23,83 @@ exports.adminListDeposits = async (req, res) => {
     if (!noLimit) {
       limit = Math.max(1, parseInt(rawLimit || "10", 10));
       if (!Number.isFinite(limit)) limit = 10;
+      limit = Math.min(limit, 100);
     }
 
     const skip = noLimit ? 0 : (page - 1) * limit;
 
     const q = String(req.query.q || "").trim();
     const userId = String(req.query.userId || "").trim();
-    const pickedUser = userId || q;
+    const fromDate = String(req.query.fromDate || "").trim();
+    const toDate = String(req.query.toDate || "").trim();
 
     const listFilter = { type: { $in: ["DEPOSIT", "ADMIN_ADJUST"] } };
     const statsFilter = { type: "DEPOSIT" };
 
-    if (pickedUser && isValidObjectId(pickedUser)) {
-      const oid = new mongoose.Types.ObjectId(pickedUser);
+    if (userId) {
+      if (!isValidObjectId(userId)) {
+        return res.status(400).json({
+          ok: false,
+          message: "Invalid userId",
+        });
+      }
+
+      const oid = new mongoose.Types.ObjectId(userId);
       listFilter.userId = oid;
       statsFilter.userId = oid;
     }
 
+    if (fromDate || toDate) {
+      listFilter.createdAt = {};
+      statsFilter.createdAt = {};
+
+      if (fromDate) {
+        const start = new Date(`${fromDate}T00:00:00.000Z`);
+        listFilter.createdAt.$gte = start;
+        statsFilter.createdAt.$gte = start;
+      }
+
+      if (toDate) {
+        const end = new Date(`${toDate}T23:59:59.999Z`);
+        listFilter.createdAt.$lte = end;
+        statsFilter.createdAt.$lte = end;
+      }
+    }
+
+    if (q && !userId) {
+      const or = [
+        { type: { $regex: q, $options: "i" } },
+        { note: { $regex: q, $options: "i" } },
+      ];
+
+      if (isValidObjectId(q)) {
+        const oid = new mongoose.Types.ObjectId(q);
+        or.push({ _id: oid });
+        or.push({ userId: oid });
+      }
+
+      const users = await User.find({
+        $or: [
+          { uid: { $regex: q, $options: "i" } },
+          { phoneNumber: { $regex: q, $options: "i" } },
+        ],
+      })
+        .select("_id")
+        .lean();
+
+      const userIds = users.map((u) => u._id);
+
+      if (userIds.length > 0) {
+        or.push({ userId: { $in: userIds } });
+      }
+
+      listFilter.$or = or;
+      statsFilter.$or = or;
+    }
+
     const rowsQuery = WalletTransaction.find(listFilter)
       .sort({ createdAt: -1 })
-      .populate("userId", "uid phoneNumber")
+      .populate("userId", "uid phoneNumber balance")
       .lean();
 
     if (!noLimit) {
@@ -67,7 +125,12 @@ exports.adminListDeposits = async (req, res) => {
         },
       ]),
       WalletTransaction.aggregate([
-        { $match: { ...statsFilter, createdAt: { $gte: today } } },
+        {
+          $match: {
+            ...statsFilter,
+            createdAt: { $gte: today },
+          },
+        },
         {
           $group: {
             _id: null,
@@ -87,12 +150,14 @@ exports.adminListDeposits = async (req, res) => {
     const totalPages = noLimit ? 1 : Math.max(1, Math.ceil(totalRows / limit));
 
     return res.json({
+      ok: true,
       deposits: rows,
       pagination: {
         page: noLimit ? 1 : page,
         limit: noLimit ? totalRows : limit,
         total: totalRows,
         totalPages,
+        pages: totalPages,
         noLimit,
       },
       stats: {
@@ -104,7 +169,10 @@ exports.adminListDeposits = async (req, res) => {
     });
   } catch (err) {
     console.error("adminListDeposits error:", err);
-    return res.status(500).json({ message: "Server error" });
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
   }
 };
 
