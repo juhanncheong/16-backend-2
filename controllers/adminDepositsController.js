@@ -54,15 +54,21 @@ exports.adminListDeposits = async (req, res) => {
       statsFilter.createdAt = {};
 
       if (fromDate) {
-        const start = new Date(`${fromDate}T00:00:00.000Z`);
-        listFilter.createdAt.$gte = start;
-        statsFilter.createdAt.$gte = start;
+        const start = new Date(fromDate);
+      
+        if (!Number.isNaN(start.getTime())) {
+          listFilter.createdAt.$gte = start;
+          statsFilter.createdAt.$gte = start;
+        }
       }
-
+      
       if (toDate) {
-        const end = new Date(`${toDate}T23:59:59.999Z`);
-        listFilter.createdAt.$lte = end;
-        statsFilter.createdAt.$lte = end;
+        const end = new Date(toDate);
+      
+        if (!Number.isNaN(end.getTime())) {
+          listFilter.createdAt.$lte = end;
+          statsFilter.createdAt.$lte = end;
+        }
       }
     }
 
