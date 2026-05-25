@@ -36,6 +36,8 @@ const userSchema = new mongoose.Schema(
     referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     referredByCode: { type: String, default: null, uppercase: true, trim: true },
     role: { type: String, enum: ["user", "admin"], default: "user" },
+    twoFactorEnabled: { type: Boolean, default: false, },
+    twoFactorSecret: { type: String, default: null, select: false, },
   },
   { timestamps: true }
 );

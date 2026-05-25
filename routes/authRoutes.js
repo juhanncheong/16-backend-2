@@ -3,12 +3,13 @@ const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const WalletTransaction = require("../models/WalletTransaction");
 const mongoose = require("mongoose");
-const { getLedgerTotal } = require("../utils/balance");
 const UserOrder = require("../models/UserOrder");
 const VipConfig = require("../models/VipConfig");
 const AdminPopup = require("../models/AdminPopup");
 const AdminPopupUserState = require("../models/AdminPopupUserState");
 const AdminNotification = require("../models/AdminNotification");
+const speakeasy = require("speakeasy");
+const QRCode = require("qrcode");
 
 const router = express.Router();
 const jwt = require("jsonwebtoken");
@@ -234,7 +235,7 @@ router.post("/login", async (req, res) => {
 
     const cleanPhone = phoneNumber.trim();
 
-    const user = await User.findOne({ phoneNumber: cleanPhone });
+    const user = await User.findOne({ phoneNumber: cleanPhone }).select("+twoFactorSecret");
     if (!user) {
       return res.status(401).json({ message: "Invalid phone number or password" });
     }
@@ -248,6 +249,164 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ message: "Invalid phone number or password" });
     }
 
+    // ✅ Normal users login normally
+    if (user.role !== "admin") {
+      user.lastOnlineAt = new Date();
+      await user.save();
+
+      const token = jwt.sign(
+        { userId: user._id, role: user.role },
+        process.env.JWT_SECRET,
+        { expiresIn: process.env.JWT_EXPIRES || "7d" }
+      );
+
+      return res.json({
+        message: "Login successful",
+        token,
+        user: {
+          id: user._id,
+          phoneNumber: user.phoneNumber,
+          role: user.role,
+        },
+      });
+    }
+
+    // ✅ Admin has not set up Google Authenticator yet
+    if (!user.twoFactorEnabled || !user.twoFactorSecret) {
+      const setupToken = jwt.sign(
+        {
+          userId: user._id,
+          role: user.role,
+          purpose: "ADMIN_2FA_SETUP",
+        },
+        process.env.JWT_SECRET,
+        { expiresIn: "10m" }
+      );
+
+      return res.json({
+        ok: true,
+        message: "Google Authenticator setup required",
+        setup2FARequired: true,
+        setupToken,
+        user: {
+          id: user._id,
+          phoneNumber: user.phoneNumber,
+          role: user.role,
+        },
+      });
+    }
+
+    // ✅ Admin already has Google Authenticator enabled
+    const tempToken = jwt.sign(
+      {
+        userId: user._id,
+        role: user.role,
+        purpose: "ADMIN_2FA_LOGIN",
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "10m" }
+    );
+
+    return res.json({
+      ok: true,
+      message: "Google Authenticator code required",
+      twoFactorRequired: true,
+      tempToken,
+      user: {
+        id: user._id,
+        phoneNumber: user.phoneNumber,
+        role: user.role,
+      },
+    });
+  } catch (err) {
+    console.error("Login Error:", err.message);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
+// ✅ Admin 2FA setup QR
+router.post("/admin/2fa/setup", async (req, res) => {
+  try {
+    const { setupToken } = req.body || {};
+
+    if (!setupToken) {
+      return res.status(400).json({ message: "setupToken is required" });
+    }
+
+    const decoded = jwt.verify(setupToken, process.env.JWT_SECRET);
+
+    if (decoded.purpose !== "ADMIN_2FA_SETUP" || decoded.role !== "admin") {
+      return res.status(401).json({ message: "Invalid setup token" });
+    }
+
+    const user = await User.findById(decoded.userId).select("+twoFactorSecret");
+
+    if (!user || user.role !== "admin") {
+      return res.status(404).json({ message: "Admin not found" });
+    }
+
+    if (user.twoFactorEnabled) {
+      return res.status(400).json({ message: "Google Authenticator is already enabled" });
+    }
+
+    const secret = speakeasy.generateSecret({
+      name: `16 Group Admin (${user.phoneNumber})`,
+    });
+
+    user.twoFactorSecret = secret.base32;
+    user.twoFactorEnabled = false;
+    await user.save();
+
+    const qrCodeUrl = await QRCode.toDataURL(secret.otpauth_url);
+
+    return res.json({
+      ok: true,
+      qrCodeUrl,
+      manualKey: secret.base32,
+    });
+  } catch (err) {
+    console.error("2FA setup error:", err.message);
+    return res.status(401).json({ message: "Invalid or expired setup token" });
+  }
+});
+
+// ✅ Admin verify first 2FA setup
+router.post("/admin/2fa/verify-setup", async (req, res) => {
+  try {
+    const { setupToken, code } = req.body || {};
+
+    if (!setupToken || !code) {
+      return res.status(400).json({ message: "setupToken and code are required" });
+    }
+
+    const decoded = jwt.verify(setupToken, process.env.JWT_SECRET);
+
+    if (decoded.purpose !== "ADMIN_2FA_SETUP" || decoded.role !== "admin") {
+      return res.status(401).json({ message: "Invalid setup token" });
+    }
+
+    const user = await User.findById(decoded.userId).select("+twoFactorSecret");
+
+    if (!user || user.role !== "admin") {
+      return res.status(404).json({ message: "Admin not found" });
+    }
+
+    if (!user.twoFactorSecret) {
+      return res.status(400).json({ message: "Google Authenticator setup not started" });
+    }
+
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: "base32",
+      token: String(code).trim(),
+      window: 1,
+    });
+
+    if (!verified) {
+      return res.status(400).json({ message: "Invalid Google Authenticator code" });
+    }
+
+    user.twoFactorEnabled = true;
     user.lastOnlineAt = new Date();
     await user.save();
 
@@ -258,7 +417,8 @@ router.post("/login", async (req, res) => {
     );
 
     return res.json({
-      message: "✅ Login successful",
+      ok: true,
+      message: "Google Authenticator enabled",
       token,
       user: {
         id: user._id,
@@ -267,8 +427,73 @@ router.post("/login", async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("Login Error:", err.message);
-    return res.status(500).json({ message: "Server error" });
+    console.error("2FA verify setup error:", err.message);
+    return res.status(401).json({ message: "Invalid or expired setup token" });
+  }
+});
+
+// ✅ Admin verify 2FA login
+router.post("/admin/2fa/verify-login", async (req, res) => {
+  try {
+    const { tempToken, code } = req.body || {};
+
+    if (!tempToken || !code) {
+      return res.status(400).json({ message: "tempToken and code are required" });
+    }
+
+    const decoded = jwt.verify(tempToken, process.env.JWT_SECRET);
+
+    if (decoded.purpose !== "ADMIN_2FA_LOGIN" || decoded.role !== "admin") {
+      return res.status(401).json({ message: "Invalid temp token" });
+    }
+
+    const user = await User.findById(decoded.userId).select("+twoFactorSecret");
+
+    if (!user || user.role !== "admin") {
+      return res.status(404).json({ message: "Admin not found" });
+    }
+
+    if (!user.twoFactorEnabled || !user.twoFactorSecret) {
+      return res.status(400).json({ message: "Google Authenticator is not enabled" });
+    }
+
+    if (user.isBanned) {
+      return res.status(403).json({ message: "Your account has been banned. Contact support." });
+    }
+
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: "base32",
+      token: String(code).trim(),
+      window: 1,
+    });
+
+    if (!verified) {
+      return res.status(400).json({ message: "Invalid Google Authenticator code" });
+    }
+
+    user.lastOnlineAt = new Date();
+    await user.save();
+
+    const token = jwt.sign(
+      { userId: user._id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES || "7d" }
+    );
+
+    return res.json({
+      ok: true,
+      message: "Login successful",
+      token,
+      user: {
+        id: user._id,
+        phoneNumber: user.phoneNumber,
+        role: user.role,
+      },
+    });
+  } catch (err) {
+    console.error("2FA login error:", err.message);
+    return res.status(401).json({ message: "Invalid or expired temp token" });
   }
 });
 
