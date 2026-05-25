@@ -201,6 +201,7 @@ async function claimLuckyDraw(req, res) {
               price: poolOrder.price,
               commission,
               isBonus: true,
+              orderSource: "lucky_draw",
             },
           ],
           { session }
@@ -218,6 +219,7 @@ async function claimLuckyDraw(req, res) {
           bonusCommissionRateUsed: rateToUse,
           status: userOrder.status,
           isBonus: true,
+          orderSource: userOrder.orderSource,
         };
       } else {
         throw new Error("Unsupported reward type");

@@ -7,17 +7,22 @@ const userOrderSchema = new mongoose.Schema(
 
     status: { type: String, enum: ["PENDING", "COMPLETED"], default: "PENDING" },
 
-    // snapshot
     orderNumber: { type: String, required: true },
     orderName: { type: String, required: true },
     price: { type: Number, required: true },
     commission: { type: Number, required: true },
 
-    // snapshot image data for history
     imageUrl: { type: String, default: "" },
     imageKey: { type: String, default: "" },
 
     isBonus: { type: Boolean, default: false },
+
+    orderSource: {
+      type: String,
+      enum: ["normal", "bonus_rule", "lucky_draw"],
+      default: "normal",
+    },
+
     completedAt: { type: Date, default: null },
   },
   { timestamps: true }

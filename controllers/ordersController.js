@@ -183,6 +183,7 @@ async function searchFlights(req, res) {
         price: existingPending.price,
         commission: existingPending.commission,
         isBonus: existingPending.isBonus,
+        orderSource: existingPending.orderSource || (existingPending.isBonus ? "bonus_rule" : "normal"),
         imageUrl: pendingImageUrl,
         availableBalance: stats.availableBalance,
         shortBalance: stats.shortBalance,
@@ -287,6 +288,7 @@ async function searchFlights(req, res) {
       price: selected.price,
       commission,
       isBonus,
+      orderSource: isBonus ? "bonus_rule" : "normal",
       imageUrl: resolvedImageUrl,
       imageKey: selected.imageKey || "",
     });
@@ -331,6 +333,7 @@ async function searchFlights(req, res) {
       price: created.price,
       commission: created.commission,
       isBonus: created.isBonus,
+      orderSource: created.orderSource,
       imageUrl: resolvedImageUrl,
       availableBalance: stats.availableBalance,
       shortBalance: stats.shortBalance,
@@ -404,7 +407,7 @@ async function submitOrder(req, res) {
     pending.status = "COMPLETED";
     pending.completedAt = new Date();
 
-    if (pending.isBonus) {
+    if (pending.isBonus && pending.orderSource === "bonus_rule") {
       await BonusRule.updateOne(
         {
           user: user._id,
@@ -533,7 +536,7 @@ async function orderHistory(req, res) {
     const [orders, total] = await Promise.all([
       UserOrder.find(query)
         .select(
-          "_id status orderNumber orderName price commission isBonus completedAt createdAt updatedAt imageUrl imageKey poolOrder"
+          "_id status orderNumber orderName price commission isBonus orderSource completedAt createdAt updatedAt imageUrl imageKey poolOrder"
         )
         .populate("poolOrder", "imageUrl imageKey")
         .sort({ createdAt: -1 })
@@ -554,14 +557,33 @@ async function orderHistory(req, res) {
         order.poolOrder?.imageUrl ||
         "";
 
+      const orderSource =
+        order.orderSource ||
+        (order.isBonus ? "bonus_rule" : "normal");
+      
+      const historyName =
+        orderSource === "lucky_draw"
+          ? "Lucky Draw Bonus Order"
+          : orderSource === "bonus_rule"
+            ? "Bonus Order"
+            : order.orderName;
+      
       return {
         _id: order._id,
         status: order.status,
         orderNumber: order.orderNumber,
+      
+        // original real product/order name
         orderName: order.orderName,
+      
+        // name you show in history UI
+        historyName,
+      
         price: order.price,
         commission: order.commission,
         isBonus: order.isBonus,
+        orderSource,
+      
         completedAt: order.completedAt,
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
@@ -628,6 +650,9 @@ async function currentOrder(req, res) {
     const pendingImageUrl =
       pending.imageUrl || (await resolveOrderImage(pending.poolOrder));
 
+    const orderSource =
+      pending.orderSource || (pending.isBonus ? "bonus_rule" : "normal");
+
     return res.json({
       ok: true,
       pending: {
@@ -637,6 +662,7 @@ async function currentOrder(req, res) {
         price: pending.price,
         commission: pending.commission,
         isBonus: pending.isBonus,
+        orderSource,
         imageUrl: pendingImageUrl,
         availableBalance: stats.availableBalance,
         shortBalance: stats.shortBalance,
