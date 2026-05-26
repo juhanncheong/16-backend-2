@@ -5,15 +5,12 @@ const RecentWithdrawalAddress = require("../models/RecentWithdrawalAddress");
 const WithdrawalMethodConfig = require("../models/WithdrawalMethodConfig");
 
 const WITHDRAWAL_METHODS = [
-  "BTC_MAINNET",
-  "ETH_ERC20",
-  "SOL",
-  "USDC_ERC20",
-  "USDT_TRC20",
+  "CRYPTO",
   "BANK_FASTER_PAYMENTS",
   "BANK_SEPA",
   "WISE",
   "UAEFTS",
+  "VIP_UAEFTS",
 ];
 
 // ✅ Admin: list withdrawals (optional filters)
@@ -54,6 +51,8 @@ exports.adminListWithdrawalMethodConfigs = async (req, res) => {
         missingMethods.map((method) => ({
           method,
           isAvailable: true,
+          minAmount: 10,
+          maxAmount: 999999,
           note: "",
           updatedBy: null,
         })),
@@ -69,16 +68,31 @@ exports.adminListWithdrawalMethodConfigs = async (req, res) => {
       .sort({ createdAt: 1 })
       .lean();
 
-    const ordered = WITHDRAWAL_METHODS.map(
-      (method) =>
-        methods.find((x) => x.method === method) || {
+    const ordered = WITHDRAWAL_METHODS.map((method) => {
+      const found = methods.find((x) => x.method === method);
+    
+      if (!found) {
+        return {
           method,
           isAvailable: true,
+          minAmount: 10,
+          maxAmount: 999999,
           note: "",
           updatedBy: null,
           updatedAt: null,
-        }
-    );
+        };
+      }
+    
+      return {
+        ...found,
+        minAmount: Number.isFinite(Number(found.minAmount))
+          ? Number(found.minAmount)
+          : 10,
+        maxAmount: Number.isFinite(Number(found.maxAmount))
+          ? Number(found.maxAmount)
+          : 999999,
+      };
+    });
 
     return res.json({ ok: true, methods: ordered });
   } catch (err) {
@@ -93,7 +107,7 @@ exports.adminListWithdrawalMethodConfigs = async (req, res) => {
 exports.adminToggleWithdrawalMethod = async (req, res) => {
   try {
     const cleanMethod = String(req.params.method || "").trim().toUpperCase();
-    const { isAvailable, note } = req.body || {};
+    const { isAvailable, note, minAmount, maxAmount } = req.body || {};
 
     if (!WITHDRAWAL_METHODS.includes(cleanMethod)) {
       return res.status(400).json({
@@ -102,14 +116,78 @@ exports.adminToggleWithdrawalMethod = async (req, res) => {
       });
     }
 
+    const updateSet = {
+      updatedBy: req.user?.userId || req.user?._id || null,
+      updatedAt: new Date(),
+    };
+
+    if (isAvailable !== undefined) {
+      updateSet.isAvailable = Boolean(isAvailable);
+    }
+
+    if (note !== undefined) {
+      updateSet.note = String(note || "").trim();
+    }
+
+    if (minAmount !== undefined) {
+      const cleanMin = Number(minAmount);
+
+      if (!Number.isFinite(cleanMin) || cleanMin < 0) {
+        return res.status(400).json({
+          ok: false,
+          message: "minAmount must be a valid number greater than or equal to 0",
+        });
+      }
+
+      updateSet.minAmount = Math.round(cleanMin * 100) / 100;
+    }
+
+    if (maxAmount !== undefined) {
+      const cleanMax = Number(maxAmount);
+
+      if (!Number.isFinite(cleanMax) || cleanMax < 0) {
+        return res.status(400).json({
+          ok: false,
+          message: "maxAmount must be a valid number greater than or equal to 0",
+        });
+      }
+
+      updateSet.maxAmount = Math.round(cleanMax * 100) / 100;
+    }
+
+    const existing = await WithdrawalMethodConfig.findOne({
+      method: cleanMethod,
+    }).lean();
+
+    const finalMin =
+      updateSet.minAmount !== undefined
+        ? updateSet.minAmount
+        : Number.isFinite(Number(existing?.minAmount))
+        ? Number(existing.minAmount)
+        : 10;
+
+    const finalMax =
+      updateSet.maxAmount !== undefined
+        ? updateSet.maxAmount
+        : Number.isFinite(Number(existing?.maxAmount))
+        ? Number(existing.maxAmount)
+        : 999999;
+
+    if (finalMax < finalMin) {
+      return res.status(400).json({
+        ok: false,
+        message: "maxAmount must be greater than or equal to minAmount",
+      });
+    }
+
     const item = await WithdrawalMethodConfig.findOneAndUpdate(
       { method: cleanMethod },
       {
-        $set: {
-          isAvailable: Boolean(isAvailable),
-          note: String(note || "").trim(),
-          updatedBy: req.user?.userId || req.user?._id || null,
-        },
+        $set: updateSet,
+
+        // ✅ Important:
+        // Do NOT put isAvailable, minAmount, maxAmount, or note here.
+        // They may also exist in $set, causing MongoDB conflict.
         $setOnInsert: {
           method: cleanMethod,
         },
@@ -118,6 +196,7 @@ exports.adminToggleWithdrawalMethod = async (req, res) => {
         upsert: true,
         new: true,
         runValidators: true,
+        setDefaultsOnInsert: true,
       }
     ).lean();
 

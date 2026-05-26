@@ -9,15 +9,12 @@ const WithdrawalMethodConfig = require("../models/WithdrawalMethodConfig");
 const MAX_PIN_ATTEMPTS = 3;
 
 const WITHDRAWAL_METHODS = [
-  "BTC_MAINNET",
-  "ETH_ERC20",
-  "SOL",
-  "USDC_ERC20",
-  "USDT_TRC20",
+  "CRYPTO",
   "BANK_FASTER_PAYMENTS",
   "BANK_SEPA",
   "WISE",
   "UAEFTS",
+  "VIP_UAEFTS",
 ];
 
 const CRYPTO_METHODS = [
@@ -113,7 +110,15 @@ async function ensureWithdrawalMethods(session = null) {
     WITHDRAWAL_METHODS.map((method) =>
       WithdrawalMethodConfig.findOneAndUpdate(
         { method },
-        { $setOnInsert: { method, isAvailable: true, note: "" } },
+        {
+          $setOnInsert: {
+            method,
+            isAvailable: true,
+            minAmount: 10,
+            maxAmount: 999999,
+            note: "",
+          },
+        },
         {
           upsert: true,
           new: true,
@@ -316,7 +321,8 @@ exports.createWithdrawal = async (req, res) => {
 
     amount = Number(amount);
     const pin = sanitizePin(withdrawPin);
-    const selectedMethod = normalizeMethod(paymentMethod || cryptoType);
+    const selectedMethod = normalizeMethod(paymentMethod);
+    const selectedCryptoType = normalizeMethod(cryptoType);
 
     const user = await User.findById(userId).select(
       "+withdrawPinHash withdrawPinFailedAttempts withdrawPinLocked withdrawPinLockedAt balance ordersCompleted ordersLimit withdrawalBlocked withdrawalBlockedReason withdrawalBlockedAt creditScore uid phoneNumber role"
@@ -432,13 +438,6 @@ exports.createWithdrawal = async (req, res) => {
       });
     }
 
-    if (amount < 10) {
-      return res.status(400).json({
-        ok: false,
-        message: "Minimum withdrawal is 10",
-      });
-    }
-
     if (!WITHDRAWAL_METHODS.includes(selectedMethod)) {
       return res.status(400).json({
         ok: false,
@@ -446,10 +445,27 @@ exports.createWithdrawal = async (req, res) => {
       });
     }
 
+    if (selectedMethod === "CRYPTO") {
+      if (!CRYPTO_METHODS.includes(selectedCryptoType)) {
+        return res.status(400).json({
+          ok: false,
+          message: "Invalid crypto type",
+        });
+      }
+    }
+    
     const methodConfig = await WithdrawalMethodConfig.findOne({
       method: selectedMethod,
     }).lean();
-
+    
+    const methodMinAmount = Number.isFinite(Number(methodConfig?.minAmount))
+      ? Number(methodConfig.minAmount)
+      : 10;
+    
+    const methodMaxAmount = Number.isFinite(Number(methodConfig?.maxAmount))
+      ? Number(methodConfig.maxAmount)
+      : 999999;
+    
     if (methodConfig && !methodConfig.isAvailable) {
       return res.status(403).json({
         ok: false,
@@ -458,6 +474,28 @@ exports.createWithdrawal = async (req, res) => {
         paymentMethod: selectedMethod,
         isAvailable: false,
         note: methodConfig.note || "",
+      });
+    }
+    
+    if (amount < methodMinAmount) {
+      return res.status(400).json({
+        ok: false,
+        code: "WITHDRAWAL_AMOUNT_BELOW_MIN",
+        message: `Minimum withdrawal for ${selectedMethod} is ${methodMinAmount}`,
+        paymentMethod: selectedMethod,
+        minAmount: methodMinAmount,
+        maxAmount: methodMaxAmount,
+      });
+    }
+    
+    if (amount > methodMaxAmount) {
+      return res.status(400).json({
+        ok: false,
+        code: "WITHDRAWAL_AMOUNT_ABOVE_MAX",
+        message: `Maximum withdrawal for ${selectedMethod} is ${methodMaxAmount}`,
+        paymentMethod: selectedMethod,
+        minAmount: methodMinAmount,
+        maxAmount: methodMaxAmount,
       });
     }
 
@@ -474,7 +512,7 @@ exports.createWithdrawal = async (req, res) => {
       referenceNote: "",
     };
 
-    if (CRYPTO_METHODS.includes(selectedMethod)) {
+    if (selectedMethod === "CRYPTO") {
       if (!address || typeof address !== "string" || address.trim().length < 8) {
         return res.status(400).json({
           ok: false,
@@ -549,7 +587,7 @@ exports.createWithdrawal = async (req, res) => {
         wiseEmail,
         referenceNote,
       };
-    } else if (selectedMethod === "UAEFTS") {
+    } else if (selectedMethod === "UAEFTS" || selectedMethod === "VIP_UAEFTS") {
       const accountName = String(bankDetails?.accountName || "").trim();
       const bankName = String(bankDetails?.bankName || "").trim();
       const iban = normalizeIban(bankDetails?.iban);
@@ -581,14 +619,15 @@ exports.createWithdrawal = async (req, res) => {
     }
 
     const result = await runTransactionWithRetry(async (session) => {
-      if (CRYPTO_METHODS.includes(selectedMethod)) {
+      if (selectedMethod === "CRYPTO") {
         const existingOtherUserWithdrawal = await Withdrawal.findOne({
-          address: cleanAddress,
-          paymentMethod: selectedMethod,
-          user: { $ne: user._id },
-        })
-          .sort({ createdAt: 1 })
-          .session(session);
+        address: cleanAddress,
+        paymentMethod: "CRYPTO",
+        cryptoType: selectedCryptoType,
+        user: { $ne: user._id },
+      })
+        .sort({ createdAt: 1 })
+        .session(session);
 
         if (existingOtherUserWithdrawal) {
           const existingNotification = await AdminNotification.findOne({
@@ -596,18 +635,18 @@ exports.createWithdrawal = async (req, res) => {
             user: user._id,
             relatedUser: existingOtherUserWithdrawal.user,
             address: cleanAddress,
-            cryptoType: selectedMethod,
+            cryptoType: selectedCryptoType,
           }).session(session);
 
           if (!existingNotification) {
             await createAdminNotification({
               type: "DUPLICATE_WITHDRAWAL_ADDRESS",
               title: "Duplicate withdrawal address detected",
-              message: `A withdrawal address is being used by more than one user for ${selectedMethod}.`,
+              message: `A withdrawal address is being used by more than one user for ${selectedCryptoType}.`,
               user: user._id,
               relatedUser: existingOtherUserWithdrawal.user,
               address: cleanAddress,
-              cryptoType: selectedMethod,
+              cryptoType: selectedCryptoType,
               session,
             });
           }
@@ -652,11 +691,15 @@ exports.createWithdrawal = async (req, res) => {
             user: user._id,
             amount,
             paymentMethod: selectedMethod,
-            cryptoType: CRYPTO_METHODS.includes(selectedMethod) ? selectedMethod : null,
+            cryptoType: selectedMethod === "CRYPTO" ? selectedCryptoType : null,
             address: cleanAddress,
-            bankDetails: ["BANK_FASTER_PAYMENTS", "BANK_SEPA", "WISE", "UAEFTS"].includes(
-              selectedMethod
-            )
+            bankDetails: [
+              "BANK_FASTER_PAYMENTS",
+              "BANK_SEPA",
+              "WISE",
+              "UAEFTS",
+              "VIP_UAEFTS",
+            ].includes(selectedMethod)
               ? cleanBankDetails
               : undefined,
             status: "PENDING",
@@ -680,17 +723,17 @@ exports.createWithdrawal = async (req, res) => {
             ? `${cleanBankDetails.iban}`
             : selectedMethod === "WISE"
             ? `${cleanBankDetails.wiseEmail}`
-            : selectedMethod === "UAEFTS"
+            : selectedMethod === "UAEFTS" || selectedMethod === "VIP_UAEFTS"
             ? `${cleanBankDetails.bankName} ${cleanBankDetails.iban}`
             : cleanAddress,
-        cryptoType: selectedMethod,
+        cryptoType: selectedMethod === "CRYPTO" ? selectedCryptoType : "",
         session,
       });
 
-      if (CRYPTO_METHODS.includes(selectedMethod)) {
+      if (selectedMethod === "CRYPTO") {
         await saveRecentWithdrawalAddress({
           userId: user._id,
-          cryptoType: selectedMethod,
+          cryptoType: selectedCryptoType,
           address: cleanAddress,
           session,
         });

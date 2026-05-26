@@ -4,24 +4,21 @@ const withdrawalSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
 
-    amount: { type: Number, required: true, min: 10 },
+    amount: { type: Number, required: true, min: 0 },
 
     paymentMethod: {
       type: String,
       enum: [
-        "BTC_MAINNET",
-        "ETH_ERC20",
-        "SOL",
-        "USDC_ERC20",
-        "USDT_TRC20",
+        "CRYPTO",
         "BANK_FASTER_PAYMENTS",
         "BANK_SEPA",
         "WISE",
         "UAEFTS",
+        "VIP_UAEFTS",
       ],
       required: true,
     },
-
+    
     cryptoType: {
       type: String,
       enum: ["BTC_MAINNET", "ETH_ERC20", "SOL", "USDC_ERC20", "USDT_TRC20"],
