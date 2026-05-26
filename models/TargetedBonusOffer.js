@@ -20,8 +20,20 @@ const targetedBonusOfferSchema = new mongoose.Schema(
       trim: true,
     },
 
+    eventType: {
+      type: String,
+      enum: ["targeted", "anniversary", "entrepreneur"],
+      default: "targeted",
+      index: true,
+    },
+
     options: [
       {
+        tierTitle: {
+          type: String,
+          default: "",
+          trim: true,
+        },
         depositAmount: {
           type: Number,
           required: true,
@@ -38,6 +50,11 @@ const targetedBonusOfferSchema = new mongoose.Schema(
     ],
 
     selectedOption: {
+      tierTitle: {
+        type: String,
+        default: "",
+        trim: true,
+      },
       depositAmount: {
         type: Number,
         default: null,

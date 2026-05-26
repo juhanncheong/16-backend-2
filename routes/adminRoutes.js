@@ -2240,7 +2240,12 @@ router.patch("/popups/:id/active", protect, adminOnly, async (req, res) => {
 router.post("/users/:uid/targeted-bonus-offers", protect, adminOnly, async (req, res) => {
   try {
     const uid = String(req.params.uid || "").trim();
-    const { title, description, options } = req.body || {};
+    const {
+      title,
+      description,
+      options,
+      eventType,
+    } = req.body || {};
 
     if (!uid) {
       return res.status(400).json({
@@ -2279,26 +2284,35 @@ router.post("/users/:uid/targeted-bonus-offers", protect, adminOnly, async (req,
     }
 
     const cleanOptions = options.map((item) => {
+      const tierTitle = String(item.tierTitle || "").trim();
       const depositAmount = Number(item.depositAmount);
       const bonusAmount = Number(item.bonusAmount);
-
+    
       if (!Number.isFinite(depositAmount) || depositAmount <= 0) {
         throw new Error("Invalid deposit amount");
       }
-
+    
       if (!Number.isFinite(bonusAmount) || bonusAmount < 0) {
         throw new Error("Invalid bonus amount");
       }
-
+    
       return {
+        tierTitle,
         depositAmount,
         bonusAmount,
         isFull: Boolean(item.isFull),
       };
     });
 
+    const cleanEventType = ["targeted", "anniversary", "entrepreneur"].includes(
+      eventType
+    )
+      ? eventType
+      : "targeted";
+    
     const offer = await TargetedBonusOffer.create({
-      user: user._id, // still save Mongo ID internally
+      user: user._id,
+      eventType: cleanEventType,
       title: String(title).trim(),
       description: String(description).trim(),
       options: cleanOptions,
@@ -2331,6 +2345,7 @@ router.get("/targeted-bonus-offers", protect, adminOnly, async (req, res) => {
     const limit = Math.max(1, parseInt(req.query.limit || "10", 10));
     const uid = String(req.query.uid || "").trim();
     const status = String(req.query.status || "").trim();
+    const eventType = String(req.query.eventType || "").trim();
 
     const skip = (page - 1) * limit;
 
@@ -2338,6 +2353,13 @@ router.get("/targeted-bonus-offers", protect, adminOnly, async (req, res) => {
 
     if (status && ["active", "reserved", "cancelled"].includes(status)) {
       filter.status = status;
+    }
+
+    if (
+      eventType &&
+      ["targeted", "anniversary", "entrepreneur"].includes(eventType)
+    ) {
+      filter.eventType = eventType;
     }
 
     if (uid) {

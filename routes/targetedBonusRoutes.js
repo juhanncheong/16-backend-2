@@ -107,6 +107,7 @@ router.post("/:offerId/reserve", protect, async (req, res) => {
     }
 
     offer.selectedOption = {
+      tierTitle: matchedOption.tierTitle || "",
       depositAmount: selectedDepositAmount,
       bonusAmount: selectedBonusAmount,
     };
