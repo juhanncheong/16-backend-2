@@ -5,6 +5,7 @@ const User = require("../models/User");
 const RecentWithdrawalAddress = require("../models/RecentWithdrawalAddress");
 const AdminNotification = require("../models/AdminNotification");
 const WithdrawalMethodConfig = require("../models/WithdrawalMethodConfig");
+const VipConfig = require("../models/VipConfig");
 
 const MAX_PIN_ATTEMPTS = 3;
 
@@ -325,7 +326,7 @@ exports.createWithdrawal = async (req, res) => {
     const selectedCryptoType = normalizeMethod(cryptoType);
 
     const user = await User.findById(userId).select(
-      "+withdrawPinHash withdrawPinFailedAttempts withdrawPinLocked withdrawPinLockedAt balance ordersCompleted ordersLimit withdrawalBlocked withdrawalBlockedReason withdrawalBlockedAt creditScore uid phoneNumber role"
+      "+withdrawPinHash withdrawPinFailedAttempts withdrawPinLocked withdrawPinLockedAt balance ordersCompleted ordersLimit vipRank withdrawalBlocked withdrawalBlockedReason withdrawalBlockedAt creditScore uid phoneNumber role"
     );
 
     if (!user) {
@@ -359,7 +360,21 @@ exports.createWithdrawal = async (req, res) => {
     }
 
     const completed = Number(user.ordersCompleted || 0);
-    const required = Number(user.ordersLimit || 40);
+
+    let required = Number(user.ordersLimit || 40);
+    
+    try {
+      const config = await VipConfig.findOne().lean();
+      const ranks = Array.isArray(config?.ranks) ? config.ranks : [];
+      const vipRank = Number(user.vipRank || 1);
+      const vip = ranks.find((r) => Number(r.rank) === vipRank);
+    
+      if (vip && Number.isFinite(Number(vip.ordersLimit))) {
+        required = Number(vip.ordersLimit);
+      }
+    } catch (vipErr) {
+      console.error("withdrawal vip ordersLimit lookup error:", vipErr);
+    }
 
     if (completed < required) {
       return res.status(403).json({
@@ -475,6 +490,25 @@ exports.createWithdrawal = async (req, res) => {
         isAvailable: false,
         note: methodConfig.note || "",
       });
+    }
+
+    // ✅ VIP_UAEFTS can be opened only for selected user UIDs
+    if (selectedMethod === "VIP_UAEFTS") {
+      const userUid = String(user.uid || "").trim();
+
+      const allowedUids = Array.isArray(methodConfig?.allowedUids)
+        ? methodConfig.allowedUids.map((x) => String(x || "").trim()).filter(Boolean)
+        : [];
+
+      if (!userUid || !allowedUids.includes(userUid)) {
+        return res.status(403).json({
+          ok: false,
+          code: "VIP_UAEFTS_NOT_ALLOWED",
+          message: "VIP UAEFTS is not available for your account.",
+          paymentMethod: selectedMethod,
+          isAvailable: false,
+        });
+      }
     }
     
     if (amount < methodMinAmount) {
@@ -919,11 +953,36 @@ exports.getLastWithdrawalDetails = async (req, res) => {
 // ✅ User can fetch all withdrawal methods + availability
 exports.getWithdrawalMethods = async (req, res) => {
   try {
+    const userId = req.user.userId;
+
+    const user = await User.findById(userId).select("uid").lean();
+
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        message: "User not found",
+      });
+    }
+
     const methods = await ensureWithdrawalMethods();
+
+    const userUid = String(user.uid || "").trim();
+
+    const visibleMethods = methods.filter((method) => {
+      if (method.method !== "VIP_UAEFTS") return true;
+
+      if (!method.isAvailable) return false;
+
+      const allowedUids = Array.isArray(method.allowedUids)
+        ? method.allowedUids.map((x) => String(x || "").trim()).filter(Boolean)
+        : [];
+
+      return allowedUids.includes(userUid);
+    });
 
     return res.json({
       ok: true,
-      methods,
+      methods: visibleMethods,
     });
   } catch (err) {
     console.error("getWithdrawalMethods error:", err);

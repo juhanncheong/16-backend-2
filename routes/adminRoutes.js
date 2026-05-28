@@ -27,10 +27,75 @@ const AdminPopupUserState = require("../models/AdminPopupUserState");
 const TargetedBonusOffer = require("../models/TargetedBonusOffer");
 const AdminEmailTemplate = require("../models/AdminEmailTemplate");
 const AdminEmailLog = require("../models/AdminEmailLog");
+const BonusOfferTemplate = require("../models/BonusOfferTemplate");
+
+const {
+  deleteEntrepreneurOfferAfterFirstDeposit,
+} = require("../utils/entrepreneurBonusAutomation");
 
 const router = express.Router();
 
 const REFERRAL_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+const ENTREPRENEUR_TEMPLATE_KEY = "entrepreneur_default";
+
+const DEFAULT_ENTREPRENEUR_TEMPLATE = {
+  key: ENTREPRENEUR_TEMPLATE_KEY,
+  eventType: "entrepreneur",
+  title: "Entrepreneur Application",
+  description: "Pick a tier - Cash in - Get extra bonus.",
+  options: [
+    {
+      tierTitle: "Beginner Entrepreneur",
+      depositAmount: 200,
+      bonusAmount: 30,
+      isFull: false,
+    },
+    {
+      tierTitle: "Advance Entrepreneur",
+      depositAmount: 500,
+      bonusAmount: 80,
+      isFull: false,
+    },
+    {
+      tierTitle: "Superior Entrepreneur",
+      depositAmount: 1000,
+      bonusAmount: 170,
+      isFull: false,
+    },
+  ],
+};
+
+function cleanBonusTemplateOptions(options) {
+  if (!Array.isArray(options) || options.length < 1) {
+    throw new Error("At least one package option is required");
+  }
+
+  return options.map((item) => {
+    const tierTitle = String(item.tierTitle || "").trim();
+    const depositAmount = Number(item.depositAmount);
+    const bonusAmount = Number(item.bonusAmount);
+
+    if (!tierTitle) {
+      throw new Error("Each entrepreneur package needs a title");
+    }
+
+    if (!Number.isFinite(depositAmount) || depositAmount <= 0) {
+      throw new Error("Each deposit amount must be more than 0");
+    }
+
+    if (!Number.isFinite(bonusAmount) || bonusAmount < 0) {
+      throw new Error("Each bonus amount must be 0 or more");
+    }
+
+    return {
+      tierTitle,
+      depositAmount,
+      bonusAmount,
+      isFull: Boolean(item.isFull),
+    };
+  });
+}
 
 async function getTrialBonusRemainingForUser(userId) {
   const rows = await WalletTransaction.aggregate([
@@ -479,6 +544,19 @@ router.patch("/users/:id/balance", protect, adminOnly, async (req, res) => {
     await session.commitTransaction();
     session.endSession();
 
+    // ✅ Auto-delete entrepreneur event only after user's FIRST EVER deposit
+    let entrepreneurBonusDeleteResult = null;
+    
+    if (txType === "DEPOSIT" && txAmount > 0) {
+      try {
+        entrepreneurBonusDeleteResult = await deleteEntrepreneurOfferAfterFirstDeposit({
+          userId: user._id,
+        });
+      } catch (bonusErr) {
+        console.error("entrepreneur bonus auto-delete error:", bonusErr);
+      }
+    }
+
     try {
       const io = req.app.get("io");
 
@@ -510,6 +588,7 @@ router.patch("/users/:id/balance", protect, adminOnly, async (req, res) => {
         availableBalance: Number(user.balance || 0),
         role: user.role,
       },
+      entrepreneurBonusDelete: entrepreneurBonusDeleteResult,
     });
   } catch (err) {
     await session.abortTransaction();
@@ -2333,6 +2412,16 @@ router.post("/users/:uid/targeted-bonus-offers", protect, adminOnly, async (req,
       });
     }
 
+    const requestedEventType = String(eventType || "").trim();
+
+    if (requestedEventType === "entrepreneur") {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Entrepreneur offers are automated. Edit the presaved entrepreneur package instead.",
+      });
+    }
+
     const cleanOptions = options.map((item) => {
       const tierTitle = String(item.tierTitle || "").trim();
       const depositAmount = Number(item.depositAmount);
@@ -2594,6 +2683,92 @@ router.delete("/targeted-bonus-offers/:id", protect, adminOnly, async (req, res)
     return res.status(500).json({
       ok: false,
       message: err.message || "Server error",
+    });
+  }
+});
+
+// ✅ Admin get entrepreneur presaved package
+router.get("/bonus-offer-templates/entrepreneur", protect, adminOnly, async (req, res) => {
+  try {
+    let template = await BonusOfferTemplate.findOne({
+      key: ENTREPRENEUR_TEMPLATE_KEY,
+      eventType: "entrepreneur",
+    }).lean();
+
+    if (!template) {
+      template = await BonusOfferTemplate.create(DEFAULT_ENTREPRENEUR_TEMPLATE);
+      template = template.toObject();
+    }
+
+    return res.json({
+      ok: true,
+      template,
+    });
+  } catch (err) {
+    console.error("get entrepreneur template error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
+// ✅ Admin update entrepreneur presaved package
+router.put("/bonus-offer-templates/entrepreneur", protect, adminOnly, async (req, res) => {
+  try {
+    const title = String(req.body.title || "").trim();
+    const description = String(req.body.description || "").trim();
+    const options = cleanBonusTemplateOptions(req.body.options);
+
+    if (!title) {
+      return res.status(400).json({
+        ok: false,
+        message: "Title is required",
+      });
+    }
+
+    if (!description) {
+      return res.status(400).json({
+        ok: false,
+        message: "Description is required",
+      });
+    }
+
+    const template = await BonusOfferTemplate.findOneAndUpdate(
+      {
+        key: ENTREPRENEUR_TEMPLATE_KEY,
+        eventType: "entrepreneur",
+      },
+      {
+        $set: {
+          title,
+          description,
+          options,
+          updatedByAdmin: req.user?.userId || req.user?._id || null,
+        },
+        $setOnInsert: {
+          key: ENTREPRENEUR_TEMPLATE_KEY,
+          eventType: "entrepreneur",
+        },
+      },
+      {
+        upsert: true,
+        new: true,
+        runValidators: true,
+        setDefaultsOnInsert: true,
+      }
+    ).lean();
+
+    return res.json({
+      ok: true,
+      message: "Entrepreneur package saved",
+      template,
+    });
+  } catch (err) {
+    console.error("update entrepreneur template error:", err);
+    return res.status(400).json({
+      ok: false,
+      message: err.message || "Failed to save entrepreneur package",
     });
   }
 });

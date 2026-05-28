@@ -86,9 +86,40 @@ const targetedBonusOfferSchema = new mongoose.Schema(
       ref: "User",
       default: null,
     },
+
+    // ✅ Automation tracking
+    automationKey: {
+      type: String,
+      default: "",
+      trim: true,
+      index: true,
+    },
+
+    triggeredByWithdrawal: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Withdrawal",
+      default: null,
+    },
+
+    autoCreated: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   {
     timestamps: true,
+  }
+);
+
+// ✅ Prevent duplicate automated entrepreneur event for same user
+targetedBonusOfferSchema.index(
+  { user: 1, automationKey: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      automationKey: { $eq: "entrepreneur_first_withdrawal" },
+    },
   }
 );
 

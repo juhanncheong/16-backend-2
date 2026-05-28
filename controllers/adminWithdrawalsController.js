@@ -4,6 +4,10 @@ const User = require("../models/User");
 const RecentWithdrawalAddress = require("../models/RecentWithdrawalAddress");
 const WithdrawalMethodConfig = require("../models/WithdrawalMethodConfig");
 
+const {
+  createEntrepreneurOfferAfterFirstWithdrawal,
+} = require("../utils/entrepreneurBonusAutomation");
+
 const WITHDRAWAL_METHODS = [
   "CRYPTO",
   "BANK_FASTER_PAYMENTS",
@@ -78,6 +82,7 @@ exports.adminListWithdrawalMethodConfigs = async (req, res) => {
           minAmount: 10,
           maxAmount: 999999,
           note: "",
+          allowedUids: [],
           updatedBy: null,
           updatedAt: null,
         };
@@ -91,6 +96,9 @@ exports.adminListWithdrawalMethodConfigs = async (req, res) => {
         maxAmount: Number.isFinite(Number(found.maxAmount))
           ? Number(found.maxAmount)
           : 999999,
+        allowedUids: Array.isArray(found.allowedUids)
+          ? found.allowedUids
+          : [],
       };
     });
 
@@ -107,7 +115,7 @@ exports.adminListWithdrawalMethodConfigs = async (req, res) => {
 exports.adminToggleWithdrawalMethod = async (req, res) => {
   try {
     const cleanMethod = String(req.params.method || "").trim().toUpperCase();
-    const { isAvailable, note, minAmount, maxAmount } = req.body || {};
+    const { isAvailable, note, minAmount, maxAmount, allowedUids } = req.body || {};
 
     if (!WITHDRAWAL_METHODS.includes(cleanMethod)) {
       return res.status(400).json({
@@ -154,6 +162,37 @@ exports.adminToggleWithdrawalMethod = async (req, res) => {
 
       updateSet.maxAmount = Math.round(cleanMax * 100) / 100;
     }
+
+    // ✅ Only VIP_UAEFTS supports UID allowlist
+    if (allowedUids !== undefined) {
+      if (cleanMethod !== "VIP_UAEFTS") {
+        return res.status(400).json({
+          ok: false,
+          message: "allowedUids can only be updated for VIP_UAEFTS",
+        });
+      }
+
+      let cleanAllowedUids = [];
+
+      if (Array.isArray(allowedUids)) {
+        cleanAllowedUids = allowedUids
+          .map((x) => String(x || "").trim())
+          .filter(Boolean);
+      } else if (typeof allowedUids === "string") {
+        cleanAllowedUids = allowedUids
+          .split(/[,\n]/)
+          .map((x) => x.trim())
+          .filter(Boolean);
+      } else {
+        return res.status(400).json({
+          ok: false,
+          message: "allowedUids must be an array or comma/newline separated string",
+        });
+      }
+
+      // remove duplicate UIDs
+      updateSet.allowedUids = [...new Set(cleanAllowedUids)];
+    }    
 
     const existing = await WithdrawalMethodConfig.findOne({
       method: cleanMethod,
@@ -236,7 +275,26 @@ exports.adminApproveWithdrawal = async (req, res) => {
 
     await wd.save();
 
-    return res.json({ ok: true, message: "Withdrawal approved", withdrawal: wd });
+    // ✅ Auto-create entrepreneur bonus event only after user's FIRST EVER approved withdrawal
+    let entrepreneurBonusResult = null;
+    
+    try {
+      entrepreneurBonusResult = await createEntrepreneurOfferAfterFirstWithdrawal({
+        userId: wd.user,
+        withdrawalId: wd._id,
+        adminId: req.user?.userId || req.user?._id || null,
+      });
+    } catch (bonusErr) {
+      // ✅ Do not break withdrawal approval if bonus automation has an issue
+      console.error("entrepreneur bonus auto-create error:", bonusErr);
+    }
+    
+    return res.json({
+      ok: true,
+      message: "Withdrawal approved",
+      withdrawal: wd,
+      entrepreneurBonus: entrepreneurBonusResult,
+    });
   } catch (err) {
     console.error("adminApproveWithdrawal error:", err);
     return res.status(500).json({ ok: false, message: "Server error" });
