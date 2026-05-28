@@ -3011,7 +3011,7 @@ router.post("/users/:id/send-credit-score-email", protect, adminOnly, async (req
       toEmail: user.email,
       uid: user.uid,
       creditScore,
-      supportUrl: String(supportUrl || "").trim() || "https://additive-travel.com/chat",
+      supportUrl: String(supportUrl || "").trim() || "https://fashphile.com/chat",
     });
 
     return res.json({
@@ -3267,7 +3267,7 @@ router.post("/email/send", protect, adminOnly, async (req, res) => {
     const finalParams = {
       ...(params || {}),
       uid: targetUid || String(params?.uid || "").trim(),
-      supportUrl: params?.supportUrl || "https://additive-travel.com/chat",
+      supportUrl: params?.supportUrl || "https://fashphile.com/chat",
     };
 
     if (template.key === "credit_score_withdrawal_notice") {
