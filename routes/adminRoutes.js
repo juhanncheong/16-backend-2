@@ -1,6 +1,7 @@
 const express = require("express");
 const User = require("../models/User");
 const { protect, adminOnly } = require("../middleware/auth");
+const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const {
   resetUserOrders,
@@ -332,6 +333,69 @@ router.post("/users", protect, adminOnly, async (req, res) => {
     });
   } catch (err) {
     console.error("admin create user error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
+// ✅ Admin access user account without password
+router.post("/users/:id/access-account", protect, adminOnly, async (req, res) => {
+  try {
+    const targetUser = await User.findById(req.params.id)
+      .select("_id phoneNumber role isBanned")
+      .lean();
+
+    if (!targetUser) {
+      return res.status(404).json({
+        ok: false,
+        message: "User not found",
+      });
+    }
+
+    if (targetUser.isBanned) {
+      return res.status(403).json({
+        ok: false,
+        message: "Cannot access banned user account",
+      });
+    }
+
+    // ✅ Optional but recommended: do not access another admin account
+    if (targetUser.role === "admin") {
+      return res.status(403).json({
+        ok: false,
+        message: "Cannot access another admin account",
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        userId: targetUser._id,
+        role: targetUser.role || "user",
+
+        // ✅ mark this token as admin access
+        isImpersonating: true,
+        impersonatedBy: req.user.userId,
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: "30m",
+      }
+    );
+
+    return res.json({
+      ok: true,
+      message: "Access token created",
+      token,
+      user: {
+        id: targetUser._id,
+        phoneNumber: targetUser.phoneNumber,
+        role: targetUser.role,
+      },
+    });
+  } catch (err) {
+    console.error("admin access account error:", err);
     return res.status(500).json({
       ok: false,
       message: err.message || "Server error",

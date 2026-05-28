@@ -136,6 +136,15 @@ async function ensureWithdrawalMethods(session = null) {
 // ✅ User sets withdrawal PIN (ONLY if not set yet)
 exports.setWithdrawalPin = async (req, res) => {
   try {
+    // ✅ Block admin impersonation from setting withdrawal PIN
+    if (req.user?.isImpersonating) {
+      return res.status(403).json({
+        ok: false,
+        code: "IMPERSONATION_BLOCKED",
+        message: "Withdrawal PIN cannot be set during admin account access.",
+      });
+    }
+
     const userId = req.user.userId;
     const pin = sanitizePin(req.body?.pin);
 
@@ -184,6 +193,15 @@ exports.setWithdrawalPin = async (req, res) => {
 // ✅ User changes withdrawal PIN (requires old PIN)
 exports.changeWithdrawalPin = async (req, res) => {
   try {
+    // ✅ Block admin impersonation from changing withdrawal PIN
+    if (req.user?.isImpersonating) {
+      return res.status(403).json({
+        ok: false,
+        code: "IMPERSONATION_BLOCKED",
+        message: "Withdrawal PIN cannot be changed during admin account access.",
+      });
+    }
+
     const userId = req.user.userId;
 
     const oldPin = sanitizePin(req.body?.oldPin);

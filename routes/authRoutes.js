@@ -675,6 +675,13 @@ router.get("/me", protect, async (req, res) => {
 // ✅ CHANGE PASSWORD (requires old password)
 router.post("/change-password", protect, async (req, res) => {
   try {
+    if (req.user?.isImpersonating) {
+      return res.status(403).json({
+        ok: false,
+        message: "Password change is blocked during admin account access.",
+      });
+    }
+
     const userId = req.user.userId;
     const { oldPassword, newPassword } = req.body || {};
 

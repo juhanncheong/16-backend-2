@@ -25,10 +25,14 @@ const protect = async (req, res, next) => {
 
     // ✅ always attach a clean user object
     req.user = {
-      _id: String(userId),    
-      id: String(userId),     
-      userId: String(userId),  
+      _id: String(userId),
+      id: String(userId),
+      userId: String(userId),
       role: decoded.role || "user",
+    
+      // ✅ admin impersonation info
+      isImpersonating: Boolean(decoded.isImpersonating),
+      impersonatedBy: decoded.impersonatedBy ? String(decoded.impersonatedBy) : null,
     };
 
     // ✅ Enforce ban globally (kills existing sessions)
