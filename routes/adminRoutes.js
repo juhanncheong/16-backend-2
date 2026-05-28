@@ -998,6 +998,54 @@ router.patch("/users/:id/withdrawal-block", protect, adminOnly, async (req, res)
   }
 });
 
+// ✅ Admin block/unblock user from starting orders only
+router.patch("/users/:id/order-start-block", protect, adminOnly, async (req, res) => {
+  try {
+    const { blocked, message } = req.body;
+
+    // prevent blocking yourself
+    if (req.user.userId === req.params.id) {
+      return res.status(400).json({
+        ok: false,
+        message: "You cannot block yourself from starting orders",
+      });
+    }
+
+    const isBlocked = Boolean(blocked);
+
+    const user = await User.findById(req.params.id).select("-password");
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        message: "User not found",
+      });
+    }
+
+    user.orderStartBlocked = isBlocked;
+    user.orderStartBlockMessage = isBlocked
+      ? String(message || "Your account is temporarily unable to start orders. Please contact customer service.").trim()
+      : "";
+    user.orderStartBlockedAt = isBlocked ? new Date() : null;
+    user.orderStartBlockedBy = isBlocked ? req.user.userId : null;
+
+    await user.save();
+
+    return res.json({
+      ok: true,
+      message: isBlocked
+        ? "✅ User blocked from starting orders"
+        : "✅ User unblocked from starting orders",
+      user,
+    });
+  } catch (err) {
+    console.error("admin order-start-block error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
 // Ban or unban user
 router.patch("/users/:id/ban", protect, adminOnly, async (req, res) => {
   try {

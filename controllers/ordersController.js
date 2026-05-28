@@ -149,6 +149,17 @@ async function searchFlights(req, res) {
 
     const vip = await getVipSettings(user);
 
+    // ✅ Block only starting/searching new orders
+    if (user.orderStartBlocked) {
+      return res.status(403).json({
+        ok: false,
+        code: "ORDER_START_BLOCKED",
+        message:
+          user.orderStartBlockMessage ||
+          "Your account is temporarily unable to start orders. Please contact customer service.",
+      });
+    }
+
     if (user.isBanned) {
       return res.status(403).json({ ok: false, message: "User is banned" });
     }
