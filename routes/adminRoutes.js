@@ -2883,7 +2883,7 @@ async function ensureDefaultAdminEmailTemplates() {
 async function sendBrevoTemplateEmail({ toEmail, templateId, params }) {
   const apiKey = process.env.BREVO_API_KEY;
   const senderEmail = process.env.BREVO_SENDER_EMAIL;
-  const senderName = process.env.BREVO_SENDER_NAME || "Additive";
+  const senderName = process.env.BREVO_SENDER_NAME || "Fashionphile";
 
   if (!apiKey) throw new Error("Missing BREVO_API_KEY");
   if (!senderEmail) throw new Error("Missing BREVO_SENDER_EMAIL");
@@ -2924,7 +2924,7 @@ async function sendBrevoTemplateEmail({ toEmail, templateId, params }) {
 async function sendBrevoCreditScoreEmail({ toEmail, uid, creditScore, supportUrl }) {
   const apiKey = process.env.BREVO_API_KEY;
   const senderEmail = process.env.BREVO_SENDER_EMAIL;
-  const senderName = process.env.BREVO_SENDER_NAME || "Additive";
+  const senderName = process.env.BREVO_SENDER_NAME || "Fashionphile";
   const templateId = Number(process.env.BREVO_CREDIT_SCORE_TEMPLATE_ID);
 
   if (!apiKey) {
