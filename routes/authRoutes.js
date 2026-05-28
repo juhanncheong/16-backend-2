@@ -70,15 +70,25 @@ router.post("/signup", async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    const getHeaderValue = (value) => {
+      if (Array.isArray(value)) return value[0];
+      return value;
+    };
+    
+    const cfIp = getHeaderValue(req.headers["cf-connecting-ip"]);
+    const realIp = getHeaderValue(req.headers["x-real-ip"]);
+    const forwardedFor = getHeaderValue(req.headers["x-forwarded-for"]);
+    
     const rawIp =
-      req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-      req.socket?.remoteAddress ||
-      req.ip;
+      cfIp ||
+      realIp ||
+      forwardedFor?.split(",")[0]?.trim() ||
+      req.ip ||
+      req.socket?.remoteAddress;
     
     const ip = String(rawIp || "")
       .replace("::ffff:", "")
       .trim();
-    
     let registeredCountry = null;
 
     try {
