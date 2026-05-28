@@ -2443,10 +2443,8 @@ router.post("/users/:uid/targeted-bonus-offers", protect, adminOnly, async (req,
       };
     });
 
-    const cleanEventType = ["targeted", "anniversary", "entrepreneur"].includes(
-      eventType
-    )
-      ? eventType
+    const cleanEventType = ["targeted", "anniversary"].includes(requestedEventType)
+      ? requestedEventType
       : "targeted";
     
     const offer = await TargetedBonusOffer.create({
