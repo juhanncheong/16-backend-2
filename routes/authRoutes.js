@@ -26,6 +26,67 @@ function generateReferralCode(length = 8) {
   return code;
 }
 
+function generateEmailCode() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
+}
+
+async function sendBrevoEmailVerification({ toEmail, code, uid }) {
+  const apiKey = process.env.BREVO_API_KEY;
+  const senderEmail = process.env.BREVO_SENDER_EMAIL;
+  const senderName = process.env.BREVO_SENDER_NAME || "NexArbitech";
+  const templateId = Number(process.env.BREVO_EMAIL_VERIFY_TEMPLATE_ID);
+
+  if (!apiKey) {
+    throw new Error("Missing BREVO_API_KEY");
+  }
+
+  if (!senderEmail) {
+    throw new Error("Missing BREVO_SENDER_EMAIL");
+  }
+
+  if (!templateId) {
+    throw new Error("Missing BREVO_EMAIL_VERIFY_TEMPLATE_ID");
+  }
+
+  const resp = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "accept": "application/json",
+      "content-type": "application/json",
+      "api-key": apiKey,
+    },
+    body: JSON.stringify({
+      sender: {
+        name: senderName,
+        email: senderEmail,
+      },
+      to: [
+        {
+          email: toEmail,
+        },
+      ],
+      templateId,
+      params: {
+        code,
+        uid,
+      },
+    }),
+  });
+
+  const data = await resp.json().catch(() => ({}));
+
+  if (!resp.ok) {
+    console.error("Brevo send failed:", resp.status, data);
+    throw new Error(data?.message || "Failed to send verification email");
+  }
+
+  return data;
+}
+
 async function createUniqueReferralCode() {
   let code;
   let exists = true;
@@ -77,11 +138,13 @@ router.post("/signup", async (req, res) => {
     
     const cfIp = getHeaderValue(req.headers["cf-connecting-ip"]);
     const realIp = getHeaderValue(req.headers["x-real-ip"]);
+    const clientIp = getHeaderValue(req.headers["x-client-ip"]);
     const forwardedFor = getHeaderValue(req.headers["x-forwarded-for"]);
     
     const rawIp =
       cfIp ||
       realIp ||
+      clientIp ||
       forwardedFor?.split(",")[0]?.trim() ||
       req.ip ||
       req.socket?.remoteAddress;
@@ -733,6 +796,195 @@ router.post("/popup/:popupId/hide", protect, async (req, res) => {
   } catch (err) {
     console.error("hide popup error:", err);
     return res.status(500).json({ ok: false, message: err.message || "Server error" });
+  }
+});
+
+// ✅ SEND EMAIL VERIFICATION CODE
+router.post("/email/send-code", protect, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { email } = req.body || {};
+
+    const cleanEmail = String(email || "").trim().toLowerCase();
+
+    if (!cleanEmail) {
+      return res.status(400).json({
+        ok: false,
+        message: "Email is required",
+      });
+    }
+
+    if (!isValidEmail(cleanEmail)) {
+      return res.status(400).json({
+        ok: false,
+        message: "Invalid email address",
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        message: "User not found",
+      });
+    }
+
+    if (user.emailVerified && user.email === cleanEmail) {
+      return res.status(400).json({
+        ok: false,
+        message: "This email is already verified",
+      });
+    }
+
+    if (
+      user.emailVerificationExpires &&
+      new Date(user.emailVerificationExpires).getTime() > Date.now()
+    ) {
+      const remainingMs = new Date(user.emailVerificationExpires).getTime() - Date.now();
+      const remainingSeconds = Math.ceil(remainingMs / 1000);
+    
+      return res.status(429).json({
+        ok: false,
+        message: `Please wait ${remainingSeconds} seconds before requesting a new code.`,
+        retryAfterSeconds: remainingSeconds,
+      });
+    }
+
+    const existingEmailUser = await User.findOne({
+      email: cleanEmail,
+      _id: { $ne: user._id },
+    }).lean();
+
+    if (existingEmailUser) {
+      return res.status(409).json({
+        ok: false,
+        message: "This email is already used by another account",
+      });
+    }
+
+    const code = generateEmailCode();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    user.email = cleanEmail;
+    user.emailVerified = false;
+    user.emailVerificationCode = code;
+    user.emailVerificationExpires = expiresAt;
+
+    await user.save();
+
+    await sendBrevoEmailVerification({
+      toEmail: user.email,
+      code,
+      uid: user.uid,
+    });
+    
+    return res.json({
+      ok: true,
+      message: "Verification code sent successfully",
+      email: user.email,
+      uid: user.uid,
+      expiresAt,
+    });
+  } catch (err) {
+    console.error("send email verification code error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Server error",
+    });
+  }
+});
+
+// ✅ VERIFY EMAIL CODE
+router.post("/email/verify-code", protect, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { code } = req.body || {};
+
+    const cleanCode = String(code || "").trim();
+
+    if (!cleanCode) {
+      return res.status(400).json({
+        ok: false,
+        message: "Verification code is required",
+      });
+    }
+
+    if (!/^\d{6}$/.test(cleanCode)) {
+      return res.status(400).json({
+        ok: false,
+        message: "Verification code must be 6 digits",
+      });
+    }
+
+    const user = await User.findById(userId).select(
+      "+emailVerificationCode +emailVerificationExpires"
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        message: "User not found",
+      });
+    }
+
+    if (!user.email) {
+      return res.status(400).json({
+        ok: false,
+        message: "No email found. Please send a verification code first.",
+      });
+    }
+
+    if (user.emailVerified) {
+      return res.status(400).json({
+        ok: false,
+        message: "Email is already verified",
+      });
+    }
+
+    if (!user.emailVerificationCode || !user.emailVerificationExpires) {
+      return res.status(400).json({
+        ok: false,
+        message: "No verification code found. Please request a new code.",
+      });
+    }
+
+    if (new Date(user.emailVerificationExpires).getTime() < Date.now()) {
+      user.emailVerificationCode = null;
+      user.emailVerificationExpires = null;
+      await user.save();
+
+      return res.status(400).json({
+        ok: false,
+        message: "Verification code has expired. Please request a new code.",
+      });
+    }
+
+    if (user.emailVerificationCode !== cleanCode) {
+      return res.status(400).json({
+        ok: false,
+        message: "Invalid verification code",
+      });
+    }
+
+    user.emailVerified = true;
+    user.emailVerificationCode = null;
+    user.emailVerificationExpires = null;
+
+    await user.save();
+
+    return res.json({
+      ok: true,
+      message: "Email verified successfully",
+      email: user.email,
+      uid: user.uid,
+      emailVerified: user.emailVerified,
+    });
+  } catch (err) {
+    console.error("verify email code error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Server error",
+    });
   }
 });
 

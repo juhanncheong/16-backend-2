@@ -4,6 +4,10 @@ const Counter = require("./Counter");
 const userSchema = new mongoose.Schema(
   {
     phoneNumber: { type: String, required: true, unique: true, trim: true },
+    email: { type: String, default: null, lowercase: true, trim: true, sparse: true, index: true, },
+    emailVerified: { type: Boolean, default: false, },
+    emailVerificationCode: { type: String, default: null, select: false, },
+    emailVerificationExpires: { type: Date, default: null, select: false, },
     password: { type: String, required: true, minlength: 6 },
     uid: { type: String, unique: true, sparse: true, trim: true },
     balance: { type: Number, default: 0 },

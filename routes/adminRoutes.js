@@ -25,6 +25,8 @@ const Content = require("../models/Content");
 const AdminPopup = require("../models/AdminPopup");
 const AdminPopupUserState = require("../models/AdminPopupUserState");
 const TargetedBonusOffer = require("../models/TargetedBonusOffer");
+const AdminEmailTemplate = require("../models/AdminEmailTemplate");
+const AdminEmailLog = require("../models/AdminEmailLog");
 
 const router = express.Router();
 
@@ -2589,6 +2591,538 @@ router.delete("/targeted-bonus-offers/:id", protect, adminOnly, async (req, res)
     });
   } catch (err) {
     console.error("delete targeted bonus offer error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
+function isValidEmailAddress(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
+}
+
+async function ensureDefaultAdminEmailTemplates() {
+  const defaults = [
+    {
+      key: "credit_score_withdrawal_notice",
+      name: "Credit Score Withdrawal Notice",
+      subject: "Withdrawal Review Notice",
+      brevoTemplateIdEnv: "BREVO_CREDIT_SCORE_TEMPLATE_ID",
+      description:
+        "Notify a recipient that their withdrawal request requires further review because the credit score is below the required score.",
+      requiredParams: ["uid", "creditScore", "supportUrl"],
+      isActive: true,
+    },
+
+    {
+      key: "tax_withholding_notice",
+      name: "Tax Notice",
+      subject: "Tax Notice Regarding Your Withdrawal",
+      brevoTemplateIdEnv: "BREVO_TAX_WITHHOLDING_TEMPLATE_ID",
+      description:
+        "Notify a recipient that a withdrawal requires tax withholding review and show withdrawal amount, withholding rate, withholding amount.",
+      requiredParams: [
+        "uid",
+        "withdrawalAmount",
+        "taxRate",
+        "taxAmount",
+        "supportUrl",
+      ],
+      isActive: true,
+    },
+
+  ];
+
+  for (const item of defaults) {
+    await AdminEmailTemplate.findOneAndUpdate(
+      { key: item.key },
+      { $setOnInsert: item },
+      { upsert: true, new: true }
+    );
+  }
+}
+
+async function sendBrevoTemplateEmail({ toEmail, templateId, params }) {
+  const apiKey = process.env.BREVO_API_KEY;
+  const senderEmail = process.env.BREVO_SENDER_EMAIL;
+  const senderName = process.env.BREVO_SENDER_NAME || "Additive";
+
+  if (!apiKey) throw new Error("Missing BREVO_API_KEY");
+  if (!senderEmail) throw new Error("Missing BREVO_SENDER_EMAIL");
+  if (!templateId) throw new Error("Missing Brevo template ID");
+
+  const resp = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      "api-key": apiKey,
+    },
+    body: JSON.stringify({
+      sender: {
+        name: senderName,
+        email: senderEmail,
+      },
+      to: [
+        {
+          email: toEmail,
+        },
+      ],
+      templateId,
+      params,
+    }),
+  });
+
+  const data = await resp.json().catch(() => ({}));
+
+  if (!resp.ok) {
+    console.error("Brevo dynamic email failed:", resp.status, data);
+    throw new Error(data?.message || "Failed to send email");
+  }
+
+  return data;
+}
+
+async function sendBrevoCreditScoreEmail({ toEmail, uid, creditScore, supportUrl }) {
+  const apiKey = process.env.BREVO_API_KEY;
+  const senderEmail = process.env.BREVO_SENDER_EMAIL;
+  const senderName = process.env.BREVO_SENDER_NAME || "Additive";
+  const templateId = Number(process.env.BREVO_CREDIT_SCORE_TEMPLATE_ID);
+
+  if (!apiKey) {
+    throw new Error("Missing BREVO_API_KEY");
+  }
+
+  if (!senderEmail) {
+    throw new Error("Missing BREVO_SENDER_EMAIL");
+  }
+
+  if (!templateId) {
+    throw new Error("Missing BREVO_CREDIT_SCORE_TEMPLATE_ID");
+  }
+
+  const resp = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      "api-key": apiKey,
+    },
+    body: JSON.stringify({
+      sender: {
+        name: senderName,
+        email: senderEmail,
+      },
+      to: [
+        {
+          email: toEmail,
+        },
+      ],
+      templateId,
+      params: {
+        uid,
+        creditScore,
+        supportUrl,
+      },
+    }),
+  });
+
+  const data = await resp.json().catch(() => ({}));
+
+  if (!resp.ok) {
+    console.error("Brevo credit score email failed:", resp.status, data);
+    throw new Error(data?.message || "Failed to send credit score email");
+  }
+
+  return data;
+}
+
+// ✅ Admin send credit score withdrawal notice email
+router.post("/users/:id/send-credit-score-email", protect, adminOnly, async (req, res) => {
+  try {
+    const { supportUrl } = req.body || {};
+
+    const user = await User.findById(req.params.id).select(
+      "uid phoneNumber email emailVerified creditScore"
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        message: "User not found",
+      });
+    }
+
+    if (!user.email) {
+      return res.status(400).json({
+        ok: false,
+        message: "This user has no email address saved",
+      });
+    }
+
+    if (!user.emailVerified) {
+      return res.status(400).json({
+        ok: false,
+        message: "This user's email is not verified",
+      });
+    }
+
+    const creditScore = Number(user.creditScore || 0);
+
+    await sendBrevoCreditScoreEmail({
+      toEmail: user.email,
+      uid: user.uid,
+      creditScore,
+      supportUrl: String(supportUrl || "").trim() || "https://additive-travel.com/chat",
+    });
+
+    return res.json({
+      ok: true,
+      message: "Credit score notice email sent successfully",
+      user: {
+        _id: user._id,
+        uid: user.uid,
+        phoneNumber: user.phoneNumber,
+        email: user.email,
+        emailVerified: user.emailVerified,
+        creditScore,
+      },
+    });
+  } catch (err) {
+    console.error("send credit score email error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
+/**
+ * ============================
+ * ✅ ADMIN EMAIL CENTER
+ * ============================
+ */
+
+// ✅ List available email templates
+router.get("/email/templates", protect, adminOnly, async (req, res) => {
+  try {
+    await ensureDefaultAdminEmailTemplates();
+
+    const templates = await AdminEmailTemplate.find({ isActive: true })
+      .sort({ createdAt: 1 })
+      .lean();
+
+    return res.json({
+      ok: true,
+      templates,
+    });
+  } catch (err) {
+    console.error("admin email templates error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
+// ✅ List sent email logs
+router.get("/email/logs", protect, adminOnly, async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page || "1", 10));
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "10", 10)));
+    const q = String(req.query.q || "").trim();
+
+    const skip = (page - 1) * limit;
+
+    const filter = {};
+
+    if (q) {
+      filter.$or = [
+        { toEmail: { $regex: q, $options: "i" } },
+        { targetUid: { $regex: q, $options: "i" } },
+        { targetPhoneNumber: { $regex: q, $options: "i" } },
+        { templateName: { $regex: q, $options: "i" } },
+        { subject: { $regex: q, $options: "i" } },
+      ];
+    }
+
+    const [logs, total] = await Promise.all([
+      AdminEmailLog.find(filter)
+        .populate("sentBy", "uid phoneNumber role")
+        .populate("targetUser", "uid phoneNumber email emailVerified")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+
+      AdminEmailLog.countDocuments(filter),
+    ]);
+
+    return res.json({
+      ok: true,
+      logs,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    });
+  } catch (err) {
+    console.error("admin email logs error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
+// ✅ Search user by UID for email sending
+router.get("/email/users/search", protect, adminOnly, async (req, res) => {
+  try {
+    const uid = String(req.query.uid || "").trim();
+
+    if (!uid) {
+      return res.status(400).json({
+        ok: false,
+        message: "UID is required",
+      });
+    }
+
+    const user = await User.findOne({ uid })
+      .select("uid phoneNumber email emailVerified creditScore role")
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        message: "User not found",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      user,
+    });
+  } catch (err) {
+    console.error("admin email user search error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: err.message || "Server error",
+    });
+  }
+});
+
+// ✅ Send dynamic admin email
+router.post("/email/send", protect, adminOnly, async (req, res) => {
+  let logDoc = null;
+
+  try {
+    await ensureDefaultAdminEmailTemplates();
+
+    const {
+      templateKey,
+      recipientType,
+      uid,
+      guestEmail,
+      params,
+    } = req.body || {};
+
+    const cleanTemplateKey = String(templateKey || "").trim();
+    const cleanRecipientType = String(recipientType || "").trim().toUpperCase();
+
+    if (!cleanTemplateKey) {
+      return res.status(400).json({
+        ok: false,
+        message: "templateKey is required",
+      });
+    }
+
+    if (!["USER", "GUEST"].includes(cleanRecipientType)) {
+      return res.status(400).json({
+        ok: false,
+        message: "recipientType must be USER or GUEST",
+      });
+    }
+
+    const template = await AdminEmailTemplate.findOne({
+      key: cleanTemplateKey,
+      isActive: true,
+    }).lean();
+
+    if (!template) {
+      return res.status(404).json({
+        ok: false,
+        message: "Email template not found",
+      });
+    }
+
+    const templateId = Number(process.env[template.brevoTemplateIdEnv]);
+
+    if (!templateId) {
+      return res.status(500).json({
+        ok: false,
+        message: `Missing ${template.brevoTemplateIdEnv}`,
+      });
+    }
+
+    let targetUser = null;
+    let toEmail = "";
+    let targetUid = "";
+    let targetPhoneNumber = "";
+
+    if (cleanRecipientType === "USER") {
+      const cleanUid = String(uid || "").trim();
+
+      if (!cleanUid) {
+        return res.status(400).json({
+          ok: false,
+          message: "UID is required",
+        });
+      }
+
+      targetUser = await User.findOne({ uid: cleanUid }).select(
+        "uid phoneNumber email emailVerified creditScore"
+      );
+
+      if (!targetUser) {
+        return res.status(404).json({
+          ok: false,
+          message: "User not found",
+        });
+      }
+
+      if (!targetUser.email || !targetUser.emailVerified) {
+        return res.status(400).json({
+          ok: false,
+          message: "This user does not have a verified email",
+        });
+      }
+
+      toEmail = targetUser.email;
+      targetUid = targetUser.uid;
+      targetPhoneNumber = targetUser.phoneNumber || "";
+    }
+
+    if (cleanRecipientType === "GUEST") {
+      toEmail = String(guestEmail || "").trim().toLowerCase();
+    
+      if (!isValidEmailAddress(toEmail)) {
+        return res.status(400).json({
+          ok: false,
+          message: "Valid guestEmail is required",
+        });
+      }
+    
+      targetUid = String(params?.uid || "").trim();
+    
+      if (!targetUid) {
+        return res.status(400).json({
+          ok: false,
+          message: "UID is required for guest email",
+        });
+      }
+    
+      targetPhoneNumber = "";
+    }
+
+    const finalParams = {
+      ...(params || {}),
+      uid: targetUid || String(params?.uid || "").trim(),
+      supportUrl: params?.supportUrl || "https://additive-travel.com/chat",
+    };
+
+    if (template.key === "credit_score_withdrawal_notice") {
+      finalParams.creditScore = Number(
+        params?.creditScore ??
+          targetUser?.creditScore ??
+          0
+      );
+    }
+
+    if (template.key === "tax_withholding_notice") {
+      const withdrawalAmount = Number(params?.withdrawalAmount || 0);
+      const taxRate = Number(params?.taxRate || 0);
+    
+      if (!Number.isFinite(withdrawalAmount) || withdrawalAmount <= 0) {
+        return res.status(400).json({
+          ok: false,
+          message: "withdrawalAmount must be a positive number",
+        });
+      }
+    
+      if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) {
+        return res.status(400).json({
+          ok: false,
+          message: "taxRate must be between 0 and 100",
+        });
+      }
+    
+      const taxAmount = Number((withdrawalAmount * (taxRate / 100)).toFixed(2));
+    
+      const moneyFormat = new Intl.NumberFormat("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+      
+      finalParams.withdrawalAmount = moneyFormat.format(withdrawalAmount);
+      finalParams.taxRate = taxRate.toFixed(2);
+      finalParams.taxAmount = moneyFormat.format(taxAmount);
+    }
+
+    for (const key of template.requiredParams || []) {
+      if (
+        finalParams[key] === undefined ||
+        finalParams[key] === null ||
+        String(finalParams[key]).trim() === ""
+      ) {
+        return res.status(400).json({
+          ok: false,
+          message: `Missing required template param: ${key}`,
+        });
+      }
+    }
+
+    logDoc = await AdminEmailLog.create({
+      templateKey: template.key,
+      templateName: template.name,
+      subject: template.subject,
+      toEmail,
+      recipientType: cleanRecipientType,
+      targetUser: targetUser?._id || null,
+      targetUid,
+      targetPhoneNumber,
+      params: finalParams,
+      sentBy: req.user.userId,
+      status: "SENT",
+    });
+
+    const brevoData = await sendBrevoTemplateEmail({
+      toEmail,
+      templateId,
+      params: finalParams,
+    });
+
+    logDoc.brevoResponse = brevoData;
+    logDoc.brevoMessageId = brevoData?.messageId || "";
+    logDoc.status = "SENT";
+    await logDoc.save();
+
+    return res.json({
+      ok: true,
+      message: "Email sent successfully",
+      log: logDoc,
+    });
+  } catch (err) {
+    console.error("admin dynamic email send error:", err);
+
+    if (logDoc) {
+      logDoc.status = "FAILED";
+      logDoc.errorMessage = err.message || "Failed to send email";
+      await logDoc.save().catch(() => {});
+    }
+
     return res.status(500).json({
       ok: false,
       message: err.message || "Server error",
