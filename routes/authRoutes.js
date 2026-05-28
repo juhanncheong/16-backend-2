@@ -148,16 +148,6 @@ router.post("/signup", async (req, res) => {
       cfIp ||
       req.ip ||
       req.socket?.remoteAddress;
-
-      console.log("REGISTER IP DEBUG:", {
-        cfIp,
-        realIp,
-        clientIp,
-        forwardedFor,
-        reqIp: req.ip,
-        socketIp: req.socket?.remoteAddress,
-        finalRawIp: rawIp,
-      });
     
     const ip = String(rawIp || "")
       .replace("::ffff:", "")
